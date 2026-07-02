@@ -8,6 +8,7 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
 - Corpus scope: **only** `torch/nn`, `torch/optim`, `torch/utils/data`, `torch/nn/functional`, `torch/autograd` + their official docs. No C++, no CUDA, no internals.
 - **Pointer-based storage:** the DB does not store raw code — only embeddings, tsvector, and metadata (path, lines, symbol, signature). The single source of truth is the pinned clone; content is read from it at query time (hydrate).
 - Language: Python 3.11+. All LLM calls go through LiteLLM starting from day one of M3 (before that — direct SDK).
+- **Open Knowledge Format (OKF)** — Google's markdown + YAML-frontmatter convention for agent-readable knowledge — is used wherever we hand-author or generate *knowledge documents* consumed by agents or humans: doc chunks (2.1), and all `docs/*.md` reports (hallucinations, error-analysis, loop-vs-langgraph). It is **not** used for the `chunks` DB schema or code chunking: that data is pointer-based (no stored content) and already has its own typed columns, so wrapping it in OKF would add a translation layer with no consumer. Use OKF where it replaces ad-hoc formatting, not where it duplicates an existing schema.
 
 ---
 
@@ -39,7 +40,7 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
   ✔ Done when: the checks run on 10 answers and print a pass/fail table.
 - [ ] [CORE] `eval/questions_v0.jsonl`: 15 manual PyTorch questions (5 easy: "what does nn.Dropout do"; 5 medium: "write a DataLoader with a custom sampler"; 5 hard: "custom autograd Function").
   ✔ Done when: the file exists and `eval/run_v0.py` runs all of them and saves results.
-- [ ] [CORE] **Document hallucinations**: run the 15 questions, manually review the code, and record in `eval/hallucinations.md` every invented API or wrong signature.
+- [ ] [CORE] **Document hallucinations**: run the 15 questions, manually review the code, and record in `eval/hallucinations.md` every invented API or wrong signature, as an OKF unit (YAML frontmatter with `question_id`, `torch_version`, `severity` + a markdown body per finding).
   ✔ Done when: at least 3 examples are documented. *(This is the measurable justification for M2 — don't skip it.)*
 
 **Gate to M2:** a working generator + the 15-question set + a documented hallucination list.
@@ -53,8 +54,8 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
   ✔ Done when: the `_corpus/` directory contains only files from the in-scope modules (hundreds of files, not thousands).
 - [ ] [CORE] `ingest/chunk_code.py`: structure-aware code chunking using the `ast` module — one chunk per function/class, with metadata: `file_path`, `start_line`, `end_line`, `symbol_name`, docstring.
   ✔ Done when: running on `torch/nn/modules/linear.py` produces separate chunks for `Linear`, `Bilinear`, etc., with correct line ranges.
-- [ ] [CORE] `ingest/chunk_docs.py`: chunk the rst/markdown doc files by heading, same metadata schema.
-  ✔ Done when: a sample of 5 files chunks sensibly under manual review.
+- [ ] [CORE] `ingest/chunk_docs.py`: chunk the rst/markdown doc files by heading, same metadata schema. Emit each chunk as an **OKF-style unit**: YAML frontmatter (`file_path`, `start_line`, `end_line`, `symbol_name`, `kind`) over a markdown body, before it's split into DB columns — this is the one point in the pipeline where an intermediate on-disk artifact is worth having, since it's a human/agent-readable knowledge snapshot of the docs corpus, not just a DB-loading step.
+  ✔ Done when: a sample of 5 files chunks sensibly under manual review, and the OKF units are valid (frontmatter parses, required keys present).
 
 ### 2.2 Indexing in Neon
 - [ ] [CORE] Table schema: `chunks(id, embedding vector, tsv tsvector, file_path, start_line, end_line, symbol_name, signature, kind)` — **no raw content column**. The tsvector is computed at index time (from content that is read but not stored) and is sufficient for keyword search. HNSW index on embedding + GIN on tsv.
@@ -101,7 +102,7 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
 ### 3.4 LangGraph and comparison
 - [ ] [CORE] Rewrite the loop as a LangGraph graph (the exact same nodes).
   ✔ Done when: both versions pass the same 15-question set with similar results.
-- [ ] [CORE] `docs/loop-vs-langgraph.md`: short comparison — lines of code, ease of debugging, latency. One page.
+- [ ] [CORE] `docs/loop-vs-langgraph.md`: short comparison — lines of code, ease of debugging, latency. One page, as an OKF unit (YAML frontmatter with `compared` and `date`).
 - [ ] [STRETCH] Expose retrieve + runner as MCP servers with FastMCP; test from an MCP client.
 - [ ] [STRETCH] Routing between an "explain" path (no runner) and a "build" path (with runner).
 - [ ] [STRETCH] Long-term memory (user preferences, torch version) — defer if no time.
@@ -116,7 +117,7 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
   ✔ Done when: a failed run can be opened in the UI and you can see at which step it broke.
 - [ ] [CORE] Expand the eval set to **40 questions** in `eval/questions_v1.jsonl`, each with: question, type (explain/build), and a gold answer or automatic assertion (e.g. "the code must run a forward pass on a 2x3 tensor without an exception").
   ✔ Done when: `eval/run_v1.py` runs all of them and prints: pass rate, grounded_api_rate, executability rate, average cost and latency.
-- [ ] [CORE] Error taxonomy: classify every failure into one of 4 categories (fake API / missed retrieval / runtime error / wrong citation), log it in MLflow, and write `docs/error-analysis.md` with 3 conclusions and one improvement actually implemented.
+- [ ] [CORE] Error taxonomy: classify every failure into one of 4 categories (fake API / missed retrieval / runtime error / wrong citation), log it in MLflow, and write `docs/error-analysis.md` (OKF unit: frontmatter with `category`, `count`, `eval_version`) with 3 conclusions and one improvement actually implemented.
   ✔ Done when: there is a measurable before/after for at least one improvement.
 - [ ] [CORE] Cache in Upstash Redis: exact-match on (question, index version) for answers, and a cache for query embeddings.
   ✔ Done when: a repeated question returns from cache in <200ms, and hit-rate is measured.
