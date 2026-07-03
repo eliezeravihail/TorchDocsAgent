@@ -11,6 +11,7 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
 - **Open Knowledge Format (OKF)** — Google's markdown + YAML-frontmatter convention for agent-readable knowledge — is used wherever we hand-author or generate *knowledge documents* consumed by agents or humans: doc chunks (2.1), and all `docs/*.md` reports (hallucinations, error-analysis, loop-vs-langgraph). It is **not** used for the `chunks` DB schema or code chunking: that data is pointer-based (no stored content) and already has its own typed columns, so wrapping it in OKF would add a translation layer with no consumer. Use OKF where it replaces ad-hoc formatting, not where it duplicates an existing schema.
 - **License headers:** the repo is Apache License 2.0. Every `.py` file carries the Apache boilerplate notice (copyright + license pointer) at the top, per the license's own Appendix. New source files must include it from creation — don't add it retroactively as cleanup.
 - **PyTorch source license:** torch is licensed under a Modified BSD (BSD-3-Clause style) license, copyright Meta/Facebook Inc. and contributors (see [pytorch/pytorch LICENSE](https://github.com/pytorch/pytorch/blob/main/LICENSE) and [NOTICE](https://github.com/pytorch/pytorch/blob/main/NOTICE)). Any actual torch source text we serve back to a user — hydrated snippets, citations, quoted excerpts — must carry a license attribution beneath it. This is a display/serving requirement, separate from our own Apache-2.0 headers on our own code.
+- **LLM provider:** primary is **Gemini Flash** (Google) — has a genuine free tier (rate-limited, no card required), used for all development and iteration in M0/M1 to avoid burning paid credits before the pipeline is stable. **Claude Haiku** (Anthropic, paid, no persistent free tier) is the comparison/fallback provider — used to sanity-check output quality once the eval set exists, and becomes the official LiteLLM fallback from M3. Both are US-based; no Chinese-hosted models.
 
 ---
 
@@ -18,10 +19,10 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
 
 - [ ] [CORE] New repo `torchdocs-agent` with the structure from the README (`ingest/`, `index/`, `agent/`, `eval/`, `app/`), `pyproject.toml`, `ruff`, `pytest`, pre-commit.
   ✔ Done when: `pytest` runs green on a single placeholder test.
-- [ ] [CORE] Accounts: Neon (project + DB), at least one LLM key (Anthropic/OpenAI), Langfuse cloud (or defer self-hosting to M4).
+- [ ] [CORE] Accounts: Neon (project + DB), a Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey) (free tier), Langfuse cloud (or defer self-hosting to M4).
   ✔ Done when: `psql $NEON_URL -c "select 1"` works and `.env.example` exists in the repo.
-- [ ] [CORE] `scripts/smoke.py`: one LLM call + a write/read against Neon.
-  ✔ Done when: the script runs cleanly from the command line.
+- [ ] [CORE] `scripts/smoke.py`: one Gemini Flash call + a write/read against Neon.
+  ✔ Done when: the script runs cleanly from the command line, with zero API cost.
 
 ---
 
@@ -32,8 +33,9 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
   ✔ Done when: a round-trip test (dict → model → dict) passes.
 
 ### 1.2 LLM wrapper
-- [ ] [CORE] `agent/llm.py`: function `generate_code(question: str) -> CodeAnswer` with structured output, retry (up to 3, exponential backoff), and timeout.
+- [ ] [CORE] `agent/llm.py`: function `generate_code(question: str) -> CodeAnswer` with structured output, retry (up to 3, exponential backoff), and timeout. Built against **Gemini Flash** first (free tier) so iteration during development costs nothing.
   ✔ Done when: 10 different questions return a valid `CodeAnswer` without exceptions.
+- [ ] [STRETCH] Run the same 10 questions through **Claude Haiku** and compare output quality/structured-output reliability — informs which provider becomes the LiteLLM primary in M3.
 - [ ] [CORE] Parsing-failure handling: if the output doesn't fit the schema — one repair attempt with the error message, otherwise return a clean error.
   ✔ Done when: a test with a mock that returns broken JSON passes.
 
