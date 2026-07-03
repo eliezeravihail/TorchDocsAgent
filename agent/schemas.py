@@ -15,8 +15,7 @@
 from pydantic import BaseModel
 
 
-class CodeAnswer(BaseModel):
-    code: str
+class Answer(BaseModel):
     explanation: str
-    symbols_used: list[str]
+    symbols_referenced: list[str]
     torch_version: str

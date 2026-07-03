@@ -16,12 +16,11 @@ import json
 
 import pytest
 
-from agent.llm import GenerationError, generate_code
+from agent.llm import GenerationError, answer_question
 
 VALID_ANSWER = {
-    "code": "import torch\nx = torch.zeros(3)",
-    "explanation": "Creates a zero tensor of length 3.",
-    "symbols_used": ["torch.zeros"],
+    "explanation": "torch.zeros(3) creates a 1-D tensor of length 3 filled with zeros.",
+    "symbols_referenced": ["torch.zeros"],
     "torch_version": "2.7.0",
 }
 
@@ -49,49 +48,49 @@ class FakeClient:
         self.models = FakeModels(replies)
 
 
-def test_generate_code_success_first_try():
+def test_answer_question_success_first_try():
     client = FakeClient([json.dumps(VALID_ANSWER)])
 
-    result = generate_code("what does nn.Dropout do?", client=client)
+    result = answer_question("what does torch.zeros do?", client=client)
 
-    assert result.code == VALID_ANSWER["code"]
-    assert result.symbols_used == ["torch.zeros"]
+    assert result.explanation == VALID_ANSWER["explanation"]
+    assert result.symbols_referenced == ["torch.zeros"]
     assert client.models.calls == 1
 
 
-def test_generate_code_repairs_broken_json_once():
+def test_answer_question_repairs_broken_json_once():
     client = FakeClient(["not valid json {{{", json.dumps(VALID_ANSWER)])
 
-    result = generate_code("what does nn.Dropout do?", client=client)
+    result = answer_question("what does torch.zeros do?", client=client)
 
     assert result.torch_version == "2.7.0"
     assert client.models.calls == 2
 
 
-def test_generate_code_gives_up_after_one_repair_attempt():
+def test_answer_question_gives_up_after_one_repair_attempt():
     client = FakeClient(["not valid json {{{", "still not valid json {{{"])
 
     with pytest.raises(GenerationError):
-        generate_code("what does nn.Dropout do?", client=client)
+        answer_question("what does torch.zeros do?", client=client)
 
     assert client.models.calls == 2
 
 
-def test_generate_code_retries_on_transient_errors(monkeypatch):
+def test_answer_question_retries_on_transient_errors(monkeypatch):
     monkeypatch.setattr("agent.llm.time.sleep", lambda _: None)
     client = FakeClient([RuntimeError("network blip"), json.dumps(VALID_ANSWER)])
 
-    result = generate_code("what does nn.Dropout do?", client=client, max_retries=3)
+    result = answer_question("what does torch.zeros do?", client=client, max_retries=3)
 
-    assert result.code == VALID_ANSWER["code"]
+    assert result.explanation == VALID_ANSWER["explanation"]
     assert client.models.calls == 2
 
 
-def test_generate_code_raises_after_exhausting_retries(monkeypatch):
+def test_answer_question_raises_after_exhausting_retries(monkeypatch):
     monkeypatch.setattr("agent.llm.time.sleep", lambda _: None)
     client = FakeClient([RuntimeError("down"), RuntimeError("down"), RuntimeError("down")])
 
     with pytest.raises(GenerationError):
-        generate_code("what does nn.Dropout do?", client=client, max_retries=3)
+        answer_question("what does torch.zeros do?", client=client, max_retries=3)
 
     assert client.models.calls == 3

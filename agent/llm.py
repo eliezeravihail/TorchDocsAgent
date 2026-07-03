@@ -19,16 +19,17 @@ from google import genai
 from google.genai import types
 from pydantic import ValidationError
 
-from agent.schemas import CodeAnswer
+from agent.schemas import Answer
 
 DEFAULT_MODEL = "gemini-2.5-flash"
 MAX_RETRIES = 3
 TIMEOUT_SECONDS = 30
 
 SYSTEM_PROMPT = (
-    "You are a PyTorch coding assistant. Given a question about PyTorch, "
-    "respond with working code, a short explanation, the exact torch API "
-    "symbols the code uses, and the torch version the code targets."
+    "You are a PyTorch documentation assistant. Given a question about PyTorch, "
+    "explain the relevant behavior in prose and name the exact torch API symbols "
+    "involved. Never write or emit code, including code blocks or fenced snippets "
+    "— explain everything in words only."
 )
 
 
@@ -52,19 +53,19 @@ def _call_model(client: genai.Client, question: str, model: str, repair_note: st
         config=types.GenerateContentConfig(
             system_instruction=SYSTEM_PROMPT,
             response_mime_type="application/json",
-            response_schema=CodeAnswer,
+            response_schema=Answer,
         ),
     )
     return response.text
 
 
-def generate_code(
+def answer_question(
     question: str,
     *,
     model: str = DEFAULT_MODEL,
     max_retries: int = MAX_RETRIES,
     client: genai.Client | None = None,
-) -> CodeAnswer:
+) -> Answer:
     client = client or _client()
 
     last_error: Exception | None = None
@@ -80,7 +81,7 @@ def generate_code(
             continue
 
         try:
-            return CodeAnswer.model_validate_json(raw)
+            return Answer.model_validate_json(raw)
         except ValidationError as exc:
             last_error = exc
             if repair_note is not None:
@@ -92,4 +93,4 @@ def generate_code(
                 "Reply again with corrected JSON matching the schema exactly."
             )
 
-    raise GenerationError(f"failed to generate a valid CodeAnswer for {question!r}") from last_error
+    raise GenerationError(f"failed to generate a valid Answer for {question!r}") from last_error
