@@ -10,6 +10,7 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
 - Language: Python 3.11+. All LLM calls go through LiteLLM starting from day one of M3 (before that — direct SDK).
 - **Open Knowledge Format (OKF)** — Google's markdown + YAML-frontmatter convention for agent-readable knowledge — is used wherever we hand-author or generate *knowledge documents* consumed by agents or humans: doc chunks (2.1), and all `docs/*.md` reports (hallucinations, error-analysis, loop-vs-langgraph). It is **not** used for the `chunks` DB schema or code chunking: that data is pointer-based (no stored content) and already has its own typed columns, so wrapping it in OKF would add a translation layer with no consumer. Use OKF where it replaces ad-hoc formatting, not where it duplicates an existing schema.
 - **License headers:** the repo is Apache License 2.0. Every `.py` file carries the Apache boilerplate notice (copyright + license pointer) at the top, per the license's own Appendix. New source files must include it from creation — don't add it retroactively as cleanup.
+- **PyTorch source license:** torch is licensed under a Modified BSD (BSD-3-Clause style) license, copyright Meta/Facebook Inc. and contributors (see [pytorch/pytorch LICENSE](https://github.com/pytorch/pytorch/blob/main/LICENSE) and [NOTICE](https://github.com/pytorch/pytorch/blob/main/NOTICE)). Any actual torch source text we serve back to a user — hydrated snippets, citations, quoted excerpts — must carry a license attribution beneath it. This is a display/serving requirement, separate from our own Apache-2.0 headers on our own code.
 
 ---
 
@@ -51,8 +52,8 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
 ## M2 · Grounding (Weeks 3–4)
 
 ### 2.1 Ingestion
-- [ ] [CORE] `ingest/clone.py`: download torch 2.7 (pinned tag, `--depth 1`) and filter to in-scope directories only.
-  ✔ Done when: the `_corpus/` directory contains only files from the in-scope modules (hundreds of files, not thousands).
+- [ ] [CORE] `ingest/clone.py`: download torch 2.7 (pinned tag, `--depth 1`) and filter to in-scope directories only. Also keep torch's own `LICENSE` and `NOTICE` files from the clone (don't filter them out) — they're the source of truth for the attribution text added in 2.4.
+  ✔ Done when: the `_corpus/` directory contains only files from the in-scope modules (hundreds of files, not thousands), plus the top-level `LICENSE`/`NOTICE`.
 - [ ] [CORE] `ingest/chunk_code.py`: structure-aware code chunking using the `ast` module — one chunk per function/class, with metadata: `file_path`, `start_line`, `end_line`, `symbol_name`, docstring.
   ✔ Done when: running on `torch/nn/modules/linear.py` produces separate chunks for `Linear`, `Bilinear`, etc., with correct line ranges.
 - [ ] [CORE] `ingest/chunk_docs.py`: chunk the rst/markdown doc files by heading, same metadata schema. Emit each chunk as an **OKF-style unit**: YAML frontmatter (`file_path`, `start_line`, `end_line`, `symbol_name`, `kind`) over a markdown body, before it's split into DB columns — this is the one point in the pipeline where an intermediate on-disk artifact is worth having, since it's a human/agent-readable knowledge snapshot of the docs corpus, not just a DB-loading step.
@@ -67,13 +68,13 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
 ### 2.3 Hybrid retrieval
 - [ ] [CORE] `index/retrieve.py`: function `retrieve(query, k=8)` that merges dense (pgvector) + keyword (tsvector) search with simple RRF ranking. Returns **pointers** (path + line range), not content.
   ✔ Done when: searching `scaled_dot_product_attention` returns the pointer to the real definition as the top result (dense alone fails this — that's the test).
-- [ ] [CORE] `index/hydrate.py`: read the actual lines from the pinned clone based on the pointers, ready for prompt injection.
-  ✔ Done when: hydrating a retrieve result returns exactly the function, and a test confirms the metadata matches the file content.
+- [ ] [CORE] `index/hydrate.py`: read the actual lines from the pinned clone based on the pointers, ready for prompt injection. Each hydrated result carries a fixed `license: "BSD-3-Clause (PyTorch), Copyright (c) Meta Platforms, Inc. and affiliates"` string alongside the content — this is metadata, not something computed per-file, since the whole corpus shares one license.
+  ✔ Done when: hydrating a retrieve result returns exactly the function plus its license string, and a test confirms the metadata matches the file content.
 - [ ] [STRETCH] reranker (small cross-encoder or LLM-rerank) over the top-20.
 
 ### 2.4 Wiring and evaluation
-- [ ] [CORE] Update `generate_code`: retrieve → hydrate → inject the snippets into the prompt with an explicit instruction "use only APIs that appear in the context", and add `citations: list[{file_path, lines}]` to the schema.
-  ✔ Done when: answers include real citations that can be opened in the file.
+- [ ] [CORE] Update `generate_code`: retrieve → hydrate → inject the snippets into the prompt with an explicit instruction "use only APIs that appear in the context", and add `citations: list[{file_path, lines, license}]` to the schema (the `license` field is the fixed PyTorch attribution string from `hydrate`, not model-generated).
+  ✔ Done when: answers include real citations that can be opened in the file, each with a license string attached.
   *Note: from this point the pinned clone is a runtime dependency — it goes into the deploy image in M5.*
 - [ ] [CORE] Dedicated metric `grounded_api_rate`: percentage of symbols in `symbols_used` that exist in the index. Run on the 15 M1 questions, compare before/after RAG.
   ✔ Done when: there is one table showing the improvement — also great material for the README.
@@ -130,7 +131,7 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
 
 ## M5 · Shipping + Hardening (Week 8)
 
-- [ ] [CORE] Minimal Gradio interface: question field, answer with highlighted code, clickable citations, and a "code runs ✓" indicator.
+- [ ] [CORE] Minimal Gradio interface: question field, answer with highlighted code, clickable citations (each showing its `license` string beneath it), and a "code runs ✓" indicator.
 - [ ] [CORE] Deploy on a free tier — pick one: HF Spaces (fastest), Modal (more impressive, includes the sandbox), or Railway.
   ✔ Done when: a public link works from a clean browser, including a full query.
 - [ ] [CORE] Basic auth: an API key per user (table in Neon), rate limit per key, and every code run tagged to a key.
