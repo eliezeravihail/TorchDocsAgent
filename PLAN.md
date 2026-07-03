@@ -9,6 +9,7 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
 - **Pointer-based storage:** the DB does not store raw code — only embeddings, tsvector, and metadata (path, lines, symbol, signature). The single source of truth is the pinned clone; content is read from it at query time (hydrate).
 - Language: Python 3.11+. All LLM calls go through LiteLLM starting from day one of M3 (before that — direct SDK).
 - **Open Knowledge Format (OKF)** — Google's markdown + YAML-frontmatter convention for agent-readable knowledge — is used wherever we hand-author or generate *knowledge documents* consumed by agents or humans: doc chunks (2.1), and all `docs/*.md` reports (hallucinations, error-analysis, loop-vs-langgraph). It is **not** used for the `chunks` DB schema or code chunking: that data is pointer-based (no stored content) and already has its own typed columns, so wrapping it in OKF would add a translation layer with no consumer. Use OKF where it replaces ad-hoc formatting, not where it duplicates an existing schema.
+- **License headers:** the repo is Apache License 2.0. Every `.py` file carries the Apache boilerplate notice (copyright + license pointer) at the top, per the license's own Appendix. New source files must include it from creation — don't add it retroactively as cleanup.
 
 ---
 
