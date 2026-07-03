@@ -76,7 +76,8 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
 - [ ] [CORE] `index/embed.py`: compute embeddings for `kind='doc'` chunks only, in batches (resilient to mid-run failure — checkpointing), and insert/update in Neon. Code chunks never go through this.
   ✔ Done when: every doc chunk has a non-null embedding, every code chunk doesn't; re-running doesn't duplicate rows.
 
-### 2.3 Retrieval: keyword/trigram for code, hybrid for docs
+### 2.3 Retrieval: docs first, code as a deliberate fallback
+**Ordering policy:** every question retrieves from `kind='doc'` first. Falling back to `kind='code'` is a deliberate escalation, not a parallel default — it happens only when 3.1's self-grading step decides the docs don't cover what's needed (typically: the question is about an *internal mechanism* of an already-in-scope public module — e.g. "I wrote a custom LR scheduler like X; how does the internal step-count update work?" — where the public docs describe usage but not the implementation detail). This never reopens the internals-are-out-of-scope decision: it's still only the source of an already-in-scope public Python module (e.g. `torch/optim/lr_scheduler.py` itself), never `aten`/`c10`/CUDA.
 - [ ] [CORE] `index/retrieve.py`: function `retrieve(query, k=8, kind=None)`. For `kind='code'` (or unspecified, symbol-shaped queries): `tsvector` full-text + `pg_trgm` fuzzy matching on symbol names only — no embedding step. For `kind='doc'` (Python docs and cppdocs): hybrid — dense (pgvector cosine) + `tsvector`, merged with RRF (start at roughly the industry-typical 70/30 vector/keyword weighting, tune from eval data). Returns **pointers** (path + line range), not content.
   ✔ Done when: searching `scaled_dot_product_attention` returns the pointer to the real definition as the top code result (including with a typo, via trigram); a semantically-phrased doc question (e.g. "how do I stop my model from overfitting") surfaces the regularization/weight-decay doc page even without matching keywords.
 - [ ] [CORE] `agent/query_terms.py`: small LLM call that turns a fuzzy natural-language question into 1-3 concrete search terms (candidate symbol names / keywords) to feed `retrieve` for the code path. This is the "semantic understanding" step for code — done by the model, not by a vector index.
@@ -102,10 +103,10 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
 ## M3 · The Agent (Weeks 5–6)
 
 ### 3.1 The manual loop
-- [ ] [CORE] `agent/loop.py`: manual agent loop (~120 lines target): plan → retrieve → answer → **verify quote fidelity** (every quoted snippet must be an exact substring of its cited chunk) → if a quote fails verification, re-prompt once with the mismatch called out, asking it to quote correctly or drop the quote → final answer with citations. No code execution anywhere in this loop.
+- [ ] [CORE] `agent/loop.py`: manual agent loop (~120 lines target): plan → retrieve(`kind='doc'`) → answer → **verify quote fidelity** (every quoted snippet must be an exact substring of its cited chunk) → if a quote fails verification, re-prompt once with the mismatch called out, asking it to quote correctly or drop the quote → final answer with citations. No code execution anywhere in this loop.
   ✔ Done when: "how do I use mixed-precision training" goes through the full path and returns an explanation with real, verified citations (no runnable code, no execution).
-- [ ] [CORE] Self-grading on retrieval: after retrieve, a short LLM call judges whether the context is sufficient; if not — rewrite the query and retry once.
-  ✔ Done when: there is a test with an ambiguous question that demonstrates query rewriting.
+- [ ] [CORE] Self-grading on retrieval, with a code-fallback branch: after the doc retrieve, a short LLM call judges whether the context is sufficient. Three outcomes: (a) sufficient → answer from docs; (b) insufficient because retrieval missed relevant docs → rewrite the query and retry the doc search once; (c) insufficient because the question needs an *internal mechanism* of an already-in-scope public module that the docs don't cover → escalate to `retrieve(kind='code')` on the relevant symbol, and answer from the source with citations. This is the only path that reaches code chunks — it's never the first search.
+  ✔ Done when: there's a test for each of the three outcomes, including one like "I wrote a custom LR scheduler; how does the internal step-count update work?" that demonstrates the (c) code-fallback path.
 
 ### 3.2 LiteLLM gateway
 - [ ] [CORE] Route all calls through the LiteLLM proxy with config: primary provider + fallback, daily budget, and tag every call (`m3-loop`, `m3-grade`...).
