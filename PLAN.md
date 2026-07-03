@@ -19,6 +19,7 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
 - **License headers:** the repo is Apache License 2.0. Every `.py` file carries the Apache boilerplate notice (copyright + license pointer) at the top, per the license's own Appendix. New source files must include it from creation — don't add it retroactively as cleanup.
 - **PyTorch source license:** torch is licensed under a Modified BSD (BSD-3-Clause style) license, copyright Meta/Facebook Inc. and contributors (see [pytorch/pytorch LICENSE](https://github.com/pytorch/pytorch/blob/main/LICENSE) and [NOTICE](https://github.com/pytorch/pytorch/blob/main/NOTICE)). `pytorch/cppdocs` carries its own license notice too. Any actual torch source/doc text we serve back to a user — hydrated snippets, citations, quoted excerpts — must carry a license attribution beneath it. This is a display/serving requirement, separate from our own Apache-2.0 headers on our own code.
 - **LLM provider:** primary is **Gemini Flash** (Google) — has a genuine free tier (rate-limited, no card required), used for all development and iteration in M0/M1 to avoid burning paid credits before the pipeline is stable. **Claude Haiku** (Anthropic, paid, no persistent free tier) is the comparison/fallback provider — used to sanity-check output quality once the eval set exists, and becomes the official LiteLLM fallback from M3.
+- **Local SQLite for M0–M4, Neon only at M5.** A hosted Postgres isn't justified until there's an actual multi-user, concurrently-accessed deployment — that's M5's job, not development's. `index/` is built against one internal interface (`retrieve`/`hydrate`/`embed`/`load`), backed by SQLite locally: `FTS5` for keyword search (the `tsvector` equivalent), a simple trigram/fuzzy match for symbol names, and doc embeddings kept as blobs with brute-force cosine similarity in Python (the doc corpus is small enough that this is fast enough — no vector extension needed). Swapping the backend to Postgres/pgvector happens once, in M5, as an implementation detail behind the same interface — not a reason to stand up a hosted DB from day one.
 
 ---
 
@@ -26,10 +27,10 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
 
 - [ ] [CORE] New repo `torchdocs-agent` with the structure from the README (`ingest/`, `index/`, `agent/`, `eval/`, `app/`), `pyproject.toml`, `ruff`, `pytest`, pre-commit.
   ✔ Done when: `pytest` runs green on a single placeholder test.
-- [ ] [CORE] Accounts: Neon (project + DB), a Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey) (free tier), Langfuse cloud (or defer self-hosting to M4).
-  ✔ Done when: `psql $NEON_URL -c "select 1"` works and `.env.example` exists in the repo.
-- [ ] [CORE] `scripts/smoke.py`: one Gemini Flash call + a write/read against Neon.
-  ✔ Done when: the script runs cleanly from the command line, with zero API cost.
+- [ ] [CORE] Accounts: a Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey) (free tier), Langfuse cloud (or defer self-hosting to M4). No DB account needed yet — SQLite is a local file until M5.
+  ✔ Done when: `.env.example` exists in the repo with the Gemini key placeholder.
+- [ ] [CORE] `scripts/smoke.py`: one Gemini Flash call + a write/read against a local SQLite file.
+  ✔ Done when: the script runs cleanly from the command line, with zero API cost and no external DB dependency.
 
 ---
 
@@ -70,15 +71,15 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
 - [ ] [CORE] `ingest/chunk_docs.py`: chunk the rst/markdown doc files (both the Python docs and the `cppdocs` C++ API pages) by heading, same metadata schema plus `api_lang: python|cpp`. Emit each chunk as an **OKF-style unit**: YAML frontmatter (`file_path`, `start_line`, `end_line`, `symbol_name`, `kind`, `api_lang`) over a markdown body, before it's split into DB columns — this is the one point in the pipeline where an intermediate on-disk artifact is worth having, since it's a human/agent-readable knowledge snapshot of the docs corpus, not just a DB-loading step.
   ✔ Done when: a sample of 5 Python-doc files and 5 cppdocs files chunks sensibly under manual review, and the OKF units are valid (frontmatter parses, required keys present).
 
-### 2.2 Indexing in Neon
-- [ ] [CORE] Table schema: `chunks(id, tsv tsvector, embedding vector NULL, file_path, start_line, end_line, symbol_name, signature, kind, api_lang)` — **no raw content column**. `embedding` is only ever populated for `kind='doc'` rows (Python docs and cppdocs alike); `kind='code'` rows always have it `NULL`. The tsvector is computed at index time (from content that is read but not stored) over `symbol_name` + `signature` + docstring/heading text. GIN index on tsv; trigram (`pg_trgm`) index on `symbol_name`; HNSW index on `embedding` (partial index, `WHERE kind = 'doc'`).
-  ✔ Done when: a migration runs clean; `select * from chunks limit 1` contains no code — only text-search/vector metadata; `code` rows have `embedding IS NULL`.
-- [ ] [CORE] `index/embed.py`: compute embeddings for `kind='doc'` chunks only, in batches (resilient to mid-run failure — checkpointing), and insert/update in Neon. Code chunks never go through this.
+### 2.2 Indexing (SQLite locally, Postgres/Neon from M5)
+- [ ] [CORE] Table schema: `chunks(id, file_path, start_line, end_line, symbol_name, signature, kind, api_lang, embedding)` — **no raw content column**. In SQLite: an `FTS5` virtual table over `symbol_name`/`signature`/docstring text for keyword search; `embedding` is a `BLOB` (packed float array), only ever populated for `kind='doc'` rows — `kind='code'` rows always have it `NULL`.
+  ✔ Done when: the schema/migration runs clean against a local `.db` file; querying `chunks` contains no code — only text-search/vector metadata; `code` rows have `embedding IS NULL`.
+- [ ] [CORE] `index/embed.py`: compute embeddings for `kind='doc'` chunks only, in batches (resilient to mid-run failure — checkpointing), and store them in SQLite. Code chunks never go through this.
   ✔ Done when: every doc chunk has a non-null embedding, every code chunk doesn't; re-running doesn't duplicate rows.
 
 ### 2.3 Retrieval: docs first, code as a deliberate fallback
 **Ordering policy:** every question retrieves from `kind='doc'` first. Falling back to `kind='code'` is a deliberate escalation, not a parallel default — it happens only when 3.1's self-grading step decides the docs don't cover what's needed (typically: the question is about an *internal mechanism* of an already-in-scope public module — e.g. "I wrote a custom LR scheduler like X; how does the internal step-count update work?" — where the public docs describe usage but not the implementation detail). This never reopens the internals-are-out-of-scope decision: it's still only the source of an already-in-scope public Python module (e.g. `torch/optim/lr_scheduler.py` itself), never `aten`/`c10`/CUDA.
-- [ ] [CORE] `index/retrieve.py`: function `retrieve(query, k=8, kind=None)`. For `kind='code'` (or unspecified, symbol-shaped queries): `tsvector` full-text + `pg_trgm` fuzzy matching on symbol names only — no embedding step. For `kind='doc'` (Python docs and cppdocs): hybrid — dense (pgvector cosine) + `tsvector`, merged with RRF (start at roughly the industry-typical 70/30 vector/keyword weighting, tune from eval data). Returns **pointers** (path + line range), not content.
+- [ ] [CORE] `index/retrieve.py`: function `retrieve(query, k=8, kind=None)`. For `kind='code'` (or unspecified, symbol-shaped queries): SQLite `FTS5` full-text + simple fuzzy matching on symbol names only — no embedding step. For `kind='doc'` (Python docs and cppdocs): hybrid — cosine similarity over stored embeddings (brute-force in Python; the doc corpus is small enough for this to be fast) + `FTS5`, merged with RRF (start at roughly the industry-typical 70/30 vector/keyword weighting, tune from eval data). Returns **pointers** (path + line range), not content.
   ✔ Done when: searching `scaled_dot_product_attention` returns the pointer to the real definition as the top code result (including with a typo, via trigram); a semantically-phrased doc question (e.g. "how do I stop my model from overfitting") surfaces the regularization/weight-decay doc page even without matching keywords.
 - [ ] [CORE] `agent/query_terms.py`: small LLM call that turns a fuzzy natural-language question into 1-3 concrete search terms (candidate symbol names / keywords) to feed `retrieve` for the code path. This is the "semantic understanding" step for code — done by the model, not by a vector index.
   ✔ Done when: "how do I randomly drop out some activations during training" resolves to search terms that include `dropout`/`Dropout` and `retrieve` finds `nn.Dropout`.
@@ -141,6 +142,8 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
 
 ## M5 · Shipping + Hardening (Week 8)
 
+- [ ] [CORE] Set up Neon (project + DB) and migrate `index/` from local SQLite to Postgres/pgvector, behind the same `retrieve`/`hydrate`/`embed`/`load` interface built in M2. This is the first point where a hosted DB is actually justified — concurrent multi-user access that a local SQLite file can't safely serve.
+  ✔ Done when: `psql $NEON_URL -c "select 1"` works, `.env.example` has `NEON_URL`, and the app runs unchanged against Postgres instead of SQLite (same interface, different backend).
 - [ ] [CORE] Minimal Gradio interface: question field, answer with highlighted quotes, clickable citations (each showing its `license` string beneath it), and a "quotes verified ✓" indicator.
 - [ ] [CORE] Deploy on a free tier — pick one: HF Spaces (fastest), Modal, or Railway. No code-execution sandbox to provision — the deploy image only needs the tracked clones' text (torch source + cppdocs), never an installed torch package.
   ✔ Done when: a public link works from a clean browser, including a full query.
