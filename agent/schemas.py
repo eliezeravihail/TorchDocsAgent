@@ -12,5 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-def test_placeholder():
-    assert True
+from pydantic import BaseModel
+
+
+class Answer(BaseModel):
+    explanation: str
+    symbols_referenced: list[str]
+    torch_version: str

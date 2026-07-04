@@ -12,5 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-def test_placeholder():
-    assert True
+from agent.schemas import Answer
+
+
+def test_answer_round_trip():
+    data = {
+        "explanation": "torch.zeros(3) creates a 1-D tensor of length 3 filled with zeros.",
+        "symbols_referenced": ["torch.zeros"],
+        "torch_version": "2.7.0",
+    }
+
+    model = Answer.model_validate(data)
+
+    assert model.model_dump() == data
