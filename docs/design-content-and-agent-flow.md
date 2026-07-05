@@ -15,7 +15,9 @@ related_milestones: [M2, M3, M5]
 
 This document complements [PLAN.md](../PLAN.md). PLAN.md says **what** to build and in which order; this document explains **how the system works**.
 
-**Product definition (the one-sentence version):** a docs-site assistant in the style of the Ultralytics "Ask AI" widget — an agent equipped with three tools over the public PyTorch documentation site that answers any question the site can answer, cites the live pages it used, and when a question reaches into source-code internals it consults DeepWiki and refers the user to the real code (GitHub `[source]` links) rather than pretending to know. The site is the knowledge boundary; everything beyond it is a referral, never a claim.
+**Product definition (the one-sentence version):** a convenient conversational front-end to exactly two things — **the documentation as the site serves it today, and the code as it sits on GitHub `main` today** — in the style of the Ultralytics "Ask AI" widget: an agent with three tools that answers any question the site can answer, cites the live pages it used, and when a question reaches into source-code internals it consults DeepWiki and refers the user to the real code rather than pretending to know. The site is the knowledge boundary; everything beyond it is a referral, never a claim.
+
+**Non-goal, decided:** answering per the *user's* installed PyTorch version. There is one truth — what the site and `main` say now — exactly like browsing the docs yourself. No version switcher, no multi-version index, ever in this product's scope.
 
 > **Scope history.** Three earlier assumptions were **superseded** during planning: (1) the corpus was five source-code modules from a pinned git clone — it is now the documentation *site*; (2) answers had to contain executed, verified-to-run code (Docker sandbox + run-fix loop) — the product is guidance with illustrative snippets, **no sandbox**; (3) the flow was a fixed pipeline (plan → retrieve → grade → generate) — it is now a **tool-calling agent loop**, per the design research below.
 
