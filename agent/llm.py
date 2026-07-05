@@ -20,6 +20,8 @@ from agent.schemas import Answer
 
 GEMINI_MODEL = os.environ.get("TORCHDOCS_GEMINI_MODEL", "gemini-2.5-flash")
 ANTHROPIC_MODEL = os.environ.get("TORCHDOCS_ANTHROPIC_MODEL", "claude-sonnet-5")
+# any OpenAI-compatible host (DeepInfra, Nebius, OpenRouter, ...) — see .env.example
+OPENAI_COMPAT_MODEL = os.environ.get("TORCHDOCS_OPENAI_COMPAT_MODEL", "deepseek-ai/DeepSeek-V3.2")
 
 SYSTEM = (
     "You are a PyTorch documentation assistant. Answer the user's question in "
@@ -53,6 +55,8 @@ def answer_question(
         return _answer_gemini(question, client, retries, timeout)
     if provider == "anthropic":
         return _answer_anthropic(question, client, retries, timeout)
+    if provider == "openai-compat":
+        return _answer_openai_compat(question, client, retries, timeout)
     raise GenerationError(f"unknown provider: {provider}")
 
 
@@ -112,6 +116,62 @@ def _parse_gemini(response) -> Answer | None:
         return Answer.model_validate_json(getattr(response, "text", "") or "")
     except ValidationError:
         return None
+
+
+# --- OpenAI-compatible hosts (DeepInfra / Nebius / OpenRouter / ...) ---------
+
+
+def _answer_openai_compat(question: str, client, retries: int, timeout: float) -> Answer:
+    import openai
+
+    if client is None:
+        base_url = os.environ.get("OPENAI_COMPAT_BASE_URL")
+        key = os.environ.get("OPENAI_COMPAT_API_KEY")
+        if not base_url or not key:
+            raise GenerationError("OPENAI_COMPAT_BASE_URL / OPENAI_COMPAT_API_KEY not set")
+        client = openai.OpenAI(base_url=base_url, api_key=key, timeout=timeout)
+
+    schema_prompt = (
+        f"{SYSTEM}\nReply with ONLY a JSON object matching this schema:\n"
+        f"{Answer.model_json_schema()}"
+    )
+
+    def generate(messages):
+        last_exc: Exception | None = None
+        for attempt in range(retries):
+            try:
+                return client.chat.completions.create(
+                    model=OPENAI_COMPAT_MODEL,
+                    messages=messages,
+                    response_format={"type": "json_object"},
+                )
+            except openai.APIError as exc:
+                last_exc = exc
+                is_rate_limit = getattr(exc, "status_code", None) == 429
+                time.sleep(20 * (attempt + 1) if is_rate_limit else 2**attempt)
+        raise GenerationError(f"LLM call failed after {retries} attempts: {last_exc}")
+
+    messages = [
+        {"role": "system", "content": schema_prompt},
+        {"role": "user", "content": question},
+    ]
+    reply = generate(messages).choices[0].message.content or ""
+    try:
+        return Answer.model_validate_json(reply)
+    except ValidationError as exc:
+        messages.append({"role": "assistant", "content": reply})
+        messages.append(
+            {
+                "role": "user",
+                "content": f"That was not valid JSON for the schema: {exc}. "
+                "Reply again with only a corrected JSON object.",
+            }
+        )
+        repaired = generate(messages).choices[0].message.content or ""
+        try:
+            return Answer.model_validate_json(repaired)
+        except ValidationError as exc2:
+            raise GenerationError(f"schema validation failed after repair: {exc2}") from exc2
 
 
 # --- Anthropic (production path, needs API credits) -------------------------

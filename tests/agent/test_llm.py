@@ -69,6 +69,37 @@ def test_unknown_provider_raises():
         answer_question("q", provider="cohere")
 
 
+# --- OpenAI-compatible path ---------------------------------------------------
+
+
+class FakeOpenAIClient:
+    def __init__(self, replies):
+        self._replies = list(replies)
+        self.requests = []
+        completions = SimpleNamespace(create=self._create)
+        self.chat = SimpleNamespace(completions=completions)
+
+    def _create(self, **kwargs):
+        self.requests.append(kwargs)
+        content = self._replies.pop(0)
+        message = SimpleNamespace(content=content)
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+
+def test_openai_compat_valid_answer():
+    client = FakeOpenAIClient([Answer(**GOOD_PAYLOAD).model_dump_json()])
+    answer = answer_question("q", provider="openai-compat", client=client)
+    assert answer.answer_md == "Use SGD."
+    assert client.requests[0]["response_format"] == {"type": "json_object"}
+
+
+def test_openai_compat_repair_then_error():
+    client = FakeOpenAIClient(["junk", "still junk"])
+    with pytest.raises(GenerationError, match="after repair"):
+        answer_question("q", provider="openai-compat", client=client)
+    assert len(client.requests) == 2
+
+
 # --- Anthropic path ----------------------------------------------------------
 
 
