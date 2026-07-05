@@ -152,7 +152,9 @@ def _answer_openai_compat(question: str, client, retries: int, timeout: float) -
             except openai.APIError as exc:
                 last_exc = exc
                 status = getattr(exc, "status_code", None)
-                if json_mode and status in (400, 404, 422):
+                if status == 404:  # model slug gone (e.g. :free variant retired) — fail fast
+                    raise GenerationError(f"model not available: {exc}") from exc
+                if json_mode and status in (400, 422):
                     json_mode = False  # host rejected JSON mode — prompt+repair covers it
                     continue
                 time.sleep(20 * (attempt + 1) if status == 429 else 2**attempt)

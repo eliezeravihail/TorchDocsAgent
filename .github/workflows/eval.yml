@@ -10,6 +10,10 @@ on:
         type: choice
         options: [openai-compat, gemini]
         default: openai-compat
+      model:
+        description: "model slug for openai-compat (OpenRouter :free slugs rotate)"
+        type: string
+        default: "poolside/laguna-xs-2.1:free"
 
 permissions:
   contents: write
@@ -30,7 +34,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENAI_COMPAT_BASE_URL: https://openrouter.ai/api/v1
           OPENAI_COMPAT_API_KEY: ${{ secrets.OPENROUTER }}
-          TORCHDOCS_OPENAI_COMPAT_MODEL: deepseek/deepseek-chat-v3.1:free
+          TORCHDOCS_OPENAI_COMPAT_MODEL: ${{ inputs.model }}
         run: python -m eval.run_v0
       - name: Commit results back to the branch
         run: |
