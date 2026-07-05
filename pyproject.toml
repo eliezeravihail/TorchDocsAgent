@@ -7,6 +7,10 @@ readme = "README.md"
 license = { text = "MIT" }
 dependencies = [
     "pydantic>=2",
+    "python-dotenv>=1",
+    "psycopg[binary]>=3.1",
+    "anthropic>=0.40",
+    "google-genai>=1",
 ]
 
 [project.optional-dependencies]

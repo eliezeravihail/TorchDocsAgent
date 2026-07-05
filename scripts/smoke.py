@@ -1,0 +1,103 @@
+"""M0 smoke test: verify every external connection works before building anything.
+
+Checks, in order:
+  1. Neon Postgres  — connect, create a scratch table, write one row, read it back.
+  2. LLM            — one short Anthropic message round-trip.
+  3. Embeddings     — one gemini-embedding-001 call, sanity-check the vector.
+
+Run:  python scripts/smoke.py
+Exits 0 only if every configured check passes. A missing key fails that
+check with a clear message instead of a traceback, so partial setups
+still give useful output.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+
+from dotenv import load_dotenv
+
+PASS = "✓"
+FAIL = "✗"
+
+
+def check_neon() -> str | None:
+    url = os.environ.get("NEON_URL")
+    if not url:
+        return "NEON_URL is not set (copy .env.example to .env and fill it in)"
+    import psycopg
+
+    with psycopg.connect(url, connect_timeout=15) as conn, conn.cursor() as cur:
+        cur.execute("create table if not exists smoke (id int primary key, note text)")
+        cur.execute(
+            "insert into smoke (id, note) values (1, 'hello from smoke.py') "
+            "on conflict (id) do update set note = excluded.note"
+        )
+        cur.execute("select note from smoke where id = 1")
+        row = cur.fetchone()
+        if row is None or "hello" not in row[0]:
+            return f"read-back mismatch: {row!r}"
+        cur.execute("drop table smoke")
+    return None
+
+
+def check_llm() -> str | None:
+    key = os.environ.get("ANTHROPIC_API_KEY")
+    if not key:
+        return "ANTHROPIC_API_KEY is not set"
+    import anthropic
+
+    client = anthropic.Anthropic(api_key=key, timeout=60)
+    msg = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=32,
+        messages=[{"role": "user", "content": "Reply with the single word: pong"}],
+    )
+    text = "".join(block.text for block in msg.content if block.type == "text")
+    if "pong" not in text.lower():
+        return f"unexpected reply: {text!r}"
+    return None
+
+
+def check_embedding() -> str | None:
+    key = os.environ.get("GEMINI_API_KEY")
+    if not key:
+        return "GEMINI_API_KEY is not set (get one free at aistudio.google.com)"
+    from google import genai
+
+    client = genai.Client(api_key=key)
+    result = client.models.embed_content(
+        model="gemini-embedding-001",
+        contents="torch.nn.Linear applies an affine transformation",
+    )
+    vector = result.embeddings[0].values
+    if len(vector) < 256 or all(v == 0 for v in vector):
+        return f"suspicious embedding: len={len(vector)}"
+    return None
+
+
+def main() -> int:
+    load_dotenv()
+    checks = [
+        ("Neon Postgres (write/read)", check_neon),
+        ("Anthropic LLM (one message)", check_llm),
+        ("Gemini embedding (one vector)", check_embedding),
+    ]
+    failures = 0
+    for name, fn in checks:
+        try:
+            error = fn()
+        except Exception as exc:  # a broken connection should report, not crash the run
+            error = f"{type(exc).__name__}: {exc}"
+        if error:
+            failures += 1
+            print(f"{FAIL} {name}: {error}")
+        else:
+            print(f"{PASS} {name}")
+    print(f"\n{len(checks) - failures}/{len(checks)} checks passed")
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
