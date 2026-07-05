@@ -11,9 +11,13 @@ touches the network.
 
 from __future__ import annotations
 
+import re
 import xml.etree.ElementTree as ET
 import zlib
 from dataclasses import dataclass
+
+# Sphinx's own inventory-line pattern (sphinx/util/inventory.py)
+_INV_LINE_RE = re.compile(r"(.+?)\s+(\S+)\s+(-?\d+)\s+?(\S*)\s+(.*)")
 
 # Tiered seed list from docs/design-content-and-agent-flow.md §1.1 (v1 core).
 # Adding a doc set (ExecuTorch, torchao, ...) is one line here — nothing else.
@@ -46,11 +50,13 @@ def parse_objects_inv(data: bytes, base_url: str) -> list[InvEntry]:
     base = base_url.rstrip("/") + "/"
     entries: list[InvEntry] = []
     for line in zlib.decompress(rest).decode("utf-8").splitlines():
-        # format: "<name> <domain:role> <priority> <uri> <dispname>"
-        parts = line.split(" ", 4)
-        if len(parts) != 5:
+        # format: "<name> <domain:role> <priority> <uri> <dispname>".
+        # NAME MAY CONTAIN SPACES (e.g. std:label "PyTorch Contribution Guide"),
+        # so a naive split corrupts the uri — this is Sphinx's own regex.
+        match = _INV_LINE_RE.match(line.rstrip())
+        if match is None:
             continue
-        name, role, _priority, uri, _dispname = parts
+        name, role, _priority, uri, _dispname = match.groups()
         if uri.endswith("$"):  # Sphinx shorthand: '$' expands to the entry name
             uri = uri[:-1] + name
         page, _, anchor = uri.partition("#")
@@ -84,7 +90,9 @@ def discover(seeds: dict[str, str] | None = None) -> dict[str, set[str]]:
         found: set[str] = set()
         try:
             entries = parse_objects_inv(fetch(base + "objects.inv"), base)
-            found.update(e.page_url for e in entries)
+            # defense in depth: real doc pages end in .html; anything else is
+            # a malformed entry and would just 404 in the crawl
+            found.update(e.page_url for e in entries if e.page_url.endswith(".html"))
         except Exception as exc:  # noqa: BLE001 — a missing inventory must not kill the run
             print(f"[discover] {library}: no objects.inv ({exc})")
         try:
