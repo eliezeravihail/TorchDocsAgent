@@ -7,6 +7,8 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
 **Binding decisions (do not reopen during execution):**
 - Pinned PyTorch version: **the current stable at first index build — 2.12.x as of July 2026** — the docs index (`docs/2.12` tree) and eval run against the same version; a version bump is a full re-index.
 - **No code execution.** Answers are docs-grounded explanations with illustrative snippets, statically checked (parse, imports, symbols-exist-in-index) but never run. There is no sandbox, no Docker runner, no run-fix loop.
+- **Agent-with-tools architecture**, not a fixed pipeline: the LLM iterates over three bounded tools — `search_docs` (hybrid retrieval, repeatable with reformulated queries), `read_page` (whole-page hydrate), `ask_source` (DeepWiki MCP) — until it declares coverage or a budget trips. See `docs/design-content-and-agent-flow.md` §2–3.
+- **Source-code questions via DeepWiki, never via our own index**: `ask_source` calls DeepWiki's public MCP server on `pytorch/pytorch`; every claim derived from it carries a referral link (`[source]` on the API page / DeepWiki / GitHub search). If DeepWiki is down, the tool degrades to returning referral links only.
 - Corpus scope: the **public documentation site**, tiered (see the seed table in `docs/design-content-and-agent-flow.md` §1.1) — v1 core: API reference (`docs.pytorch.org/docs/{version}`), tutorials, get-started, **torchvision and torchaudio doc sets**; v1.1: the other domain-library doc sets (ExecuTorch, torchao, torchtune, …) added as config-only seeds. **Source code and forums are not indexed**: for implementation questions the agent refers the user out via the `[source]` links captured at crawl time. (Supersedes the earlier five-source-modules scope.)
 - **Pointer-based storage:** the DB does not store page text — only embeddings, tsvector, and pointers (`url`, `anchor`, page title, heading path, content hash). The source of truth for the index is the on-disk crawl snapshot; content is read from it at query time (hydrate), and citations link to the live URLs.
 - Language: Python 3.11+. All LLM calls go through LiteLLM starting from day one of M3 (before that — direct SDK).
@@ -40,7 +42,7 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
 ### 1.3 First eval — from day one
 - [ ] [CORE] `eval/checks.py`: three static checks on every `Answer`: (a) every code block in `answer_md` passes `ast.parse`; (b) every `import` in those blocks is torch/standard library; (c) every symbol in `symbols_used` actually appears in the answer.
   ✔ Done when: the checks run on 10 answers and print a pass/fail table.
-- [ ] [CORE] `eval/questions_v0.jsonl`: 15 manual questions covering the four question types (usage: "how do I use SGD?"; catalog: "what LR schedulers exist?"; recipe: "how do I build a sequence network to detect cats?", "how do I generate music?"; edge: "how do I run a fraud-detection model in the browser?").
+- [ ] [CORE] `eval/questions_v0.jsonl`: 15 manual questions covering the five question types (usage: "how do I use SGD?"; catalog: "what LR schedulers exist?"; recipe: "how do I build a sequence network to detect cats?", "how do I generate music?"; source: "how is conv2d implemented?"; edge: "how do I run a fraud-detection model in the browser?").
   ✔ Done when: the file exists and `eval/run_v0.py` runs all of them and saves results.
 - [ ] [CORE] **Document hallucinations**: run the 15 questions, manually review the code, and record in `eval/hallucinations.md` every invented API or wrong signature, as an OKF unit (YAML frontmatter with `question_id`, `torch_version`, `severity` + a markdown body per finding).
   ✔ Done when: at least 3 examples are documented. *(This is the measurable justification for M2 — don't skip it.)*
@@ -68,8 +70,8 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
 ### 2.3 Hybrid retrieval
 - [ ] [CORE] `index/retrieve.py`: function `retrieve(query, k=8)` that merges dense (pgvector) + keyword (tsvector) search with simple RRF ranking. Returns **pointers** (`url` + `anchor`), not content.
   ✔ Done when: searching `scaled_dot_product_attention` returns the pointer to its API-reference section as the top result (dense alone fails this — that's the test).
-- [ ] [CORE] `index/hydrate.py`: read the actual sections from the crawl snapshot based on the pointers, ready for prompt injection.
-  ✔ Done when: hydrating a retrieve result returns exactly the section, and a test confirms the metadata matches the snapshot content.
+- [ ] [CORE] `index/hydrate.py`: read content from the crawl snapshot — section-level (for `search_docs` results) and whole-page (for `read_page`), with an outline-first guardrail for oversized pages.
+  ✔ Done when: hydrating a retrieve result returns exactly the section, a whole-page hydrate returns clean markdown, and a test confirms the metadata matches the snapshot content.
 - [ ] [STRETCH] reranker (small cross-encoder or LLM-rerank) over the top-20.
 
 ### 2.4 Wiring and evaluation
@@ -86,39 +88,39 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
 
 ## M3 · The Agent (Weeks 5–6)
 
-### 3.1 Question classification and decomposition
-- [ ] [CORE] `agent/plan.py`: one LLM call that classifies the question type (usage / catalog / recipe / edge) and emits retrieval queries — one for usage/catalog, several (one per step) for recipe questions.
-  ✔ Done when: "how do I build a sequence network to detect cats?" decomposes into ≥3 sensible queries (data loading, model, training), and "how do I use SGD?" stays a single query.
+### 3.1 The three tools
+- [ ] [CORE] `agent/tools.py`: `search_docs(query, library=None)` (wraps retrieve+hydrate, returns pointers + section text), `read_page(url)` (whole-page hydrate with outline-first guardrail), `ask_source(question)` (DeepWiki MCP client on `pytorch/pytorch` + domain repos; on failure returns referral links only). Each tool result is a typed dict the LLM sees verbatim.
+  ✔ Done when: each tool has a unit test, and `ask_source` with the network mocked-down still returns usable referral links.
 
-### 3.2 The manual loop
-- [ ] [CORE] `agent/loop.py`: manual agent loop (~120 lines target): plan → retrieve (per query) → grade → generate → static checks → answer with citations + referrals.
-  ✔ Done when: "how do I generate music?" goes through the full path and returns a multi-step answer citing several tutorial/doc pages.
-- [ ] [CORE] Self-grading on retrieval: after retrieve, a short LLM call judges coverage — fully / partially / not at all. Partial → answer flags the gaps and adds referrals; none → one query rewrite, then an honest gap answer.
-  ✔ Done when: an edge question ("run a model in the browser") produces a partial answer with referrals, not a bluff; an ambiguous question demonstrates query rewriting.
-- [ ] [CORE] Static-check regeneration: if `eval/checks.py` fails (unparseable snippet, symbol not in index), regenerate once with the specific failures injected; a second failure delivers the answer with a visible warning.
+### 3.2 The manual tool loop
+- [ ] [CORE] `agent/loop.py`: manual tool-calling loop (~100 lines target): the LLM iterates over the three tools within budgets (`search_docs` ≤6, `read_page` ≤2, `ask_source` ≤1) until it declares coverage → generate structured `Answer` → static checks → citations + referrals.
+  ✔ Done when: "how do I generate music?" produces ≥2 distinct `search_docs` queries and an answer citing several pages; "how do I use SGD?" resolves in a single search; budget exhaustion yields an honest gap answer, not a bluff.
+- [ ] [CORE] Static-check regeneration: if `eval/checks.py` fails (unparseable snippet, symbol not in index, `ask_source` claim without a referral), regenerate once with the specific failures injected; a second failure delivers the answer with a visible warning.
   ✔ Done when: a mocked hallucinated symbol triggers exactly one regeneration round.
+- [ ] [CORE] Source-question path: "how is conv2d implemented?" flows docs-first, then `ask_source`, and the answer separates docs-cited content from DeepWiki-derived content with a referral link.
+  ✔ Done when: the answer renders the distinction and the referral URL resolves.
 
 ### 3.3 LiteLLM gateway
-- [ ] [CORE] Route all calls through the LiteLLM proxy with config: primary provider + fallback, daily budget, and tag every call (`m3-loop`, `m3-grade`...).
+- [ ] [CORE] Route all calls through the LiteLLM proxy with config: primary provider + fallback, daily budget, and tag every call (`m3-loop`, `m3-tool-search`...).
   ✔ Done when: a per-request cost report appears in the LiteLLM logs.
 
 ### 3.4 LangGraph and comparison
 - [ ] [CORE] Rewrite the loop as a LangGraph graph (the exact same nodes).
   ✔ Done when: both versions pass the same 15-question set with similar results.
 - [ ] [CORE] `docs/loop-vs-langgraph.md`: short comparison — lines of code, ease of debugging, latency. One page, as an OKF unit (YAML frontmatter with `compared` and `date`).
-- [ ] [STRETCH] Expose retrieve as an MCP server with FastMCP; test from an MCP client.
-- [ ] [STRETCH] Parallel retrieval for recipe questions (run the decomposed queries concurrently in the LangGraph version).
+- [ ] [STRETCH] Expose `search_docs` as an MCP server with FastMCP; test from an MCP client.
+- [ ] [STRETCH] Parallel tool fan-out (several `search_docs` calls concurrently in the LangGraph version).
 - [ ] [STRETCH] Long-term memory (user preferences, torch version) — defer if no time.
 
-**Gate to M4:** a real recipe question goes through plan→retrieve→grade→generate→check→cite end to end.
+**Gate to M4:** a real recipe question and a real source question both go through the tool loop end to end with correct citations/referrals.
 
 ---
 
 ## M4 · Discipline (Week 7)
 
-- [ ] [CORE] Wire up Langfuse: a trace for every run with a span per step (plan / retrieve / grade / generate / check).
-  ✔ Done when: a failed run can be opened in the UI and you can see at which step it broke.
-- [ ] [CORE] Expand the eval set to **40 questions** in `eval/questions_v1.jsonl`, each with: question, type (usage/catalog/recipe/edge), and an automatic assertion (e.g. "the answer must mention ≥5 scheduler classes", "must cite the DataLoader page", "must include a referral, not a fabricated answer").
+- [ ] [CORE] Wire up Langfuse: a trace for every run with a span per tool call plus generate/check spans.
+  ✔ Done when: a failed run can be opened in the UI and you can see which tool call or step broke, and what each tool returned.
+- [ ] [CORE] Expand the eval set to **40 questions** in `eval/questions_v1.jsonl`, each with: question, type (usage/catalog/recipe/source/edge), and an automatic assertion (e.g. "the answer must mention ≥5 scheduler classes", "must cite the DataLoader page", "must include a referral, not a fabricated answer").
   ✔ Done when: `eval/run_v1.py` runs all of them and prints: pass rate, grounded_api_rate, citation-validity rate, average cost and latency.
 - [ ] [CORE] Error taxonomy: classify every failure into one of 4 categories (fake API / missed retrieval / bluffed instead of referring out / wrong citation), log it in MLflow, and write `docs/error-analysis.md` (OKF unit: frontmatter with `category`, `count`, `eval_version`) with 3 conclusions and one improvement actually implemented.
   ✔ Done when: there is a measurable before/after for at least one improvement.
