@@ -139,6 +139,8 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
   ✔ Done when: a public link works from a clean browser, including a full query.
 - [ ] [CORE] Scheduled recrawl: a weekly job (cron / GitHub Action) that runs discover → crawl → embed incrementally (hash-diff), bumps `index_version` only when content changed, and logs how many pages changed.
   ✔ Done when: two consecutive runs against an unchanged site produce a "0 pages changed" log line and no new rows.
+- [ ] [CORE] `ingest/watch.py` — release watcher: a daily job that polls the GitHub Releases API of `pytorch/pytorch`; a new stable tag opens an issue / sends a notification and can trigger the full-rebuild pipeline for the new `docs/{version}` tree. Watches **releases, not commits** — commits are noise relative to the rendered versioned docs.
+  ✔ Done when: pointing it at a mocked "new release" response triggers the rebuild path; a normal day produces a single "no new release" log line.
 - [ ] [CORE] Basic auth: an API key per user (table in Neon), rate limit per key, and every request tagged to a key.
   ✔ Done when: a request without a key is rejected; one key cannot exceed its quota.
   *Note: not full OAuth. API keys are enough to demonstrate multi-user support.*

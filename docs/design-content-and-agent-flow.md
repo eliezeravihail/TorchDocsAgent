@@ -87,11 +87,13 @@ Key properties:
 
 ### 1.3 How often — a scheduled recrawl, because the site is alive
 
-| Trigger | What runs | Cadence |
-|---|---|---|
-| Scheduled recrawl | discover → fetch → hash-compare → re-chunk + re-embed **changed pages only** | weekly (cron); cheap because most pages are unchanged |
-| New PyTorch release (docs version bump) | full pipeline against the new `docs/{version}` tree → new `index_version` | a few times a year |
-| Chunker / embedding-model change | re-chunk / re-embed from the existing snapshot (no crawl) | during development |
+| Trigger | Watched signal | What runs | Cadence |
+|---|---|---|---|
+| Scheduled recrawl | `content_hash` of every rendered page | discover → fetch → hash-compare → re-chunk + re-embed **changed pages only** | weekly (cron); cheap because most pages are unchanged |
+| New PyTorch release | GitHub Releases API of `pytorch/pytorch` (`ingest/watch.py`) — a new stable tag | full pipeline against the new `docs/{version}` tree → new `index_version` | checked daily; fires a few times a year |
+| Chunker / embedding-model change | (manual — the only human decision left) | re-chunk / re-embed from the existing snapshot (no crawl) | during development |
+
+**Embedding refresh is a by-product, not a decision.** A page whose hash changed gets its chunks re-embedded automatically; an unchanged page costs nothing. Note the watched signals deliberately exclude *commits* to `pytorch/pytorch`: hundreds land daily and almost none change the rendered versioned docs tree — the release tag and the page hashes are the signals that actually correlate with corpus change.
 
 Two invariants: every answer is **stamped** with the `index_version` and crawl date of the pages it cites, and **cache keys include `index_version`** (M4), so a recrawl that changed content automatically invalidates affected cached answers.
 
