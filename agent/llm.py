@@ -21,7 +21,9 @@ from agent.schemas import Answer
 GEMINI_MODEL = os.environ.get("TORCHDOCS_GEMINI_MODEL", "gemini-2.5-flash")
 ANTHROPIC_MODEL = os.environ.get("TORCHDOCS_ANTHROPIC_MODEL", "claude-sonnet-5")
 # any OpenAI-compatible host (DeepInfra, Nebius, OpenRouter, ...) — see .env.example
-OPENAI_COMPAT_MODEL = os.environ.get("TORCHDOCS_OPENAI_COMPAT_MODEL", "deepseek-ai/DeepSeek-V3.2")
+OPENAI_COMPAT_MODEL = os.environ.get(
+    "TORCHDOCS_OPENAI_COMPAT_MODEL", "deepseek-ai/DeepSeek-V4-Flash"
+)
 
 SYSTEM = (
     "You are a PyTorch documentation assistant. Answer the user's question in "
