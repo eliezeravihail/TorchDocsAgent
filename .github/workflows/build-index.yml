@@ -1,0 +1,43 @@
+name: Build Index
+
+# Full pipeline on GitHub's runners: discover → crawl → chunk+embed into Neon.
+# Also serves as the weekly scheduled recrawl from the plan: the snapshot is
+# cached between runs, page hash-diff + DB chunk-hash skip make repeat runs
+# cheap, and every embed batch commits — a re-run always resumes.
+on:
+  workflow_dispatch:
+    inputs:
+      libraries:
+        description: "comma-separated subset of the seed list (empty = all)"
+        type: string
+        default: ""
+  schedule:
+    - cron: "0 3 * * 5" # weekly recrawl, Fridays 03:00 UTC
+
+concurrency: build-index # never two index builds at once
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Restore corpus snapshot from previous runs
+        uses: actions/cache@v4
+        with:
+          path: _corpus
+          key: corpus-${{ github.run_id }}
+          restore-keys: corpus-
+      - run: pip install -e .
+      - name: Build index
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          NEON_URL: ${{ secrets.NEON_URL }}
+        run: |
+          ARGS=""
+          if [ -n "${{ inputs.libraries }}" ]; then ARGS="--libraries ${{ inputs.libraries }}"; fi
+          python scripts/build_index.py $ARGS
