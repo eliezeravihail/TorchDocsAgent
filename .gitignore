@@ -25,3 +25,4 @@ htmlcov/
 
 # Pinned PyTorch corpus (downloaded, not committed)
 _corpus/
+eval/results/

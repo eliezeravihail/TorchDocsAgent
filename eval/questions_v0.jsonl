@@ -1,0 +1,15 @@
+{"id": "q01", "type": "usage", "question": "How do I use torch.optim.SGD? Show the basic pattern with momentum."}
+{"id": "q02", "type": "usage", "question": "What does nn.Dropout actually do, and how does it behave differently between training and eval?"}
+{"id": "q03", "type": "usage", "question": "How do I use a DataLoader with num_workers, and what should I watch out for on Windows?"}
+{"id": "q04", "type": "usage", "question": "What does torch.no_grad() do and when should I use it versus torch.inference_mode()?"}
+{"id": "q05", "type": "catalog", "question": "What learning-rate schedulers exist in torch.optim, and in one line each, when would I pick which?"}
+{"id": "q06", "type": "catalog", "question": "What loss functions does PyTorch provide for multi-class classification?"}
+{"id": "q07", "type": "catalog", "question": "What image datasets does torchvision ship with out of the box?"}
+{"id": "q08", "type": "recipe", "question": "How do I build a convolutional network to classify photos of cats versus dogs, end to end?"}
+{"id": "q09", "type": "recipe", "question": "How do I generate audio or music with PyTorch? Outline the pieces I need."}
+{"id": "q10", "type": "recipe", "question": "How do I fine-tune a pretrained ResNet on my own image folder dataset?"}
+{"id": "q11", "type": "recipe", "question": "How do I save training checkpoints and resume training after an interruption?"}
+{"id": "q12", "type": "source", "question": "How is conv2d actually implemented under the hood in PyTorch?"}
+{"id": "q13", "type": "source", "question": "Where in the PyTorch source is the actual SGD parameter-update step, and what does it do?"}
+{"id": "q14", "type": "edge", "question": "How do I run a fraud-detection model in the browser?"}
+{"id": "q15", "type": "edge", "question": "Can I train a PyTorch model directly on an Android phone?"}
