@@ -15,7 +15,9 @@ import textwrap
 
 from agent.schemas import Answer
 
-CODE_BLOCK_RE = re.compile(r"```(?:python|py)?\s*\n(.*?)```", re.DOTALL)
+# only explicitly-tagged python blocks: untagged fences are often directory
+# trees, shell output, or prose that must not be parsed as code
+CODE_BLOCK_RE = re.compile(r"```(?:python|py)\s*\n(.*?)```", re.DOTALL)
 
 ALLOWED_IMPORT_ROOTS = frozenset(sys.stdlib_module_names) | {
     "torch",

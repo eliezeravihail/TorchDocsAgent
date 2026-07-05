@@ -53,3 +53,10 @@ def test_indented_code_block_parses():
         update={"answer_md": "```python\n    import torch\n    x = torch.ones(2)\n```"}
     )
     assert run_checks(ok)["parses"] is None
+
+
+def test_untagged_fence_not_parsed_as_python():
+    ok = GOOD.model_copy(
+        update={"answer_md": "```\ndata/train/\n    class1/\n        img1.jpg\n```"}
+    )
+    assert run_checks(ok)["parses"] is None
