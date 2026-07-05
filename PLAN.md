@@ -12,6 +12,7 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
 - Corpus scope: the **public documentation site**, tiered (see the seed table in `docs/design-content-and-agent-flow.md` §1.1) — v1 core: API reference (`docs.pytorch.org/docs/{version}`), tutorials, get-started, **torchvision and torchaudio doc sets**; v1.1: the other domain-library doc sets (ExecuTorch, torchao, torchtune, …) added as config-only seeds. **Source code and forums are not indexed**: for implementation questions the agent refers the user out via the `[source]` links captured at crawl time. (Supersedes the earlier five-source-modules scope.)
 - **Pointer-based storage:** the DB does not store page text — only embeddings, tsvector, and pointers (`url`, `anchor`, page title, heading path, content hash). The source of truth for the index is the on-disk crawl snapshot; content is read from it at query time (hydrate), and citations link to the live URLs.
 - Language: Python 3.11+. All LLM calls go through LiteLLM starting from day one of M3 (before that — direct SDK).
+- **Embeddings: Gemini (`gemini-embedding-001`) on the API free tier.** The same model embeds both chunks and queries (mixing models breaks the vector space). The embed pipeline must be rate-limit-aware (free-tier RPM/TPM throttling) with checkpointing, so the initial index build may take hours — acceptable for a batch job. Fallback if the free tier is too slow for a full rebuild: one paid batch run (~$1–3 for the whole corpus at $0.15/M tokens).
 - **Open Knowledge Format (OKF)** — Google's markdown + YAML-frontmatter convention for agent-readable knowledge — is used wherever we hand-author or generate *knowledge documents* consumed by agents or humans: doc chunks (2.1), and all `docs/*.md` reports (hallucinations, error-analysis, loop-vs-langgraph). It is **not** used for the `chunks` DB schema or code chunking: that data is pointer-based (no stored content) and already has its own typed columns, so wrapping it in OKF would add a translation layer with no consumer. Use OKF where it replaces ad-hoc formatting, not where it duplicates an existing schema.
 
 ---
@@ -20,7 +21,7 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
 
 - [ ] [CORE] New repo `torchdocs-agent` with the structure from the README (`ingest/`, `index/`, `agent/`, `eval/`, `app/`), `pyproject.toml`, `ruff`, `pytest`, pre-commit.
   ✔ Done when: `pytest` runs green on a single placeholder test.
-- [ ] [CORE] Accounts: Neon (project + DB), at least one LLM key (Anthropic/OpenAI), Langfuse cloud (or defer self-hosting to M4).
+- [ ] [CORE] Accounts: Neon (project + DB), at least one LLM key (Anthropic/OpenAI), a Gemini API key for embeddings (Google AI Studio — free tier), Langfuse cloud (or defer self-hosting to M4).
   ✔ Done when: `psql $NEON_URL -c "select 1"` works and `.env.example` exists in the repo.
 - [ ] [CORE] `scripts/smoke.py`: one LLM call + a write/read against Neon.
   ✔ Done when: the script runs cleanly from the command line.
@@ -64,8 +65,8 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
 ### 2.2 Indexing in Neon
 - [ ] [CORE] Table schema: `chunks(id, embedding vector, tsv tsvector, url, anchor, page_title, heading_path, library, source_link, kind, content_hash, index_version)` — **no raw content column**. The tsvector is computed at index time (from content that is read but not stored) and is sufficient for keyword search. HNSW index on embedding + GIN on tsv; unique on `(url, anchor, index_version)`.
   ✔ Done when: a migration runs clean, and `select * from chunks limit 1` contains no page text — only vectors and metadata.
-- [ ] [CORE] `index/embed.py`: compute embeddings in batches (resilient to mid-run failure — checkpointing), and upsert into Neon; unchanged `content_hash` → skip (this is what makes the weekly recrawl cheap).
-  ✔ Done when: the entire corpus is indexed; `count(*)` is sensible; re-running over an unchanged snapshot embeds 0 chunks.
+- [ ] [CORE] `index/embed.py`: compute embeddings with `gemini-embedding-001` in rate-limit-aware batches (respect free-tier RPM/TPM with backoff; resilient to mid-run failure — checkpointing), and upsert into Neon; unchanged `content_hash` → skip (this is what makes the weekly recrawl cheap).
+  ✔ Done when: the entire corpus is indexed; `count(*)` is sensible; re-running over an unchanged snapshot embeds 0 chunks; hitting a mocked 429 backs off instead of crashing.
 
 ### 2.3 Hybrid retrieval
 - [ ] [CORE] `index/retrieve.py`: function `retrieve(query, k=8)` that merges dense (pgvector) + keyword (tsvector) search with simple RRF ranking. Returns **pointers** (`url` + `anchor`), not content.
