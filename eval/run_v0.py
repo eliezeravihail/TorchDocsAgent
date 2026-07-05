@@ -20,25 +20,47 @@ QUESTIONS = Path(__file__).parent / "questions_v0.jsonl"
 RESULTS = Path(__file__).parent / "results" / "v0.jsonl"
 
 
+def _load_existing() -> dict[str, dict]:
+    """Previous results keyed by question id — only ones that got an answer.
+
+    Free-tier daily quotas are scarce; a rerun must never re-spend them on
+    questions that already succeeded (or overwrite good data with errors).
+    Pass --fresh to discard previous results and re-run everything.
+    """
+    if "--fresh" in sys.argv or not RESULTS.exists():
+        return {}
+    records = (json.loads(line) for line in RESULTS.open())
+    return {r["id"]: r for r in records if "answer" in r}
+
+
 def main() -> int:
     load_dotenv()
     RESULTS.parent.mkdir(exist_ok=True)
+    existing = _load_existing()
 
     rows = []
-    with QUESTIONS.open() as qf, RESULTS.open("w") as out:
-        for line in qf:
-            q = json.loads(line)
+    records = []
+    for line in QUESTIONS.open():
+        q = json.loads(line)
+        if q["id"] in existing:
+            record = existing[q["id"]]
+            print(f"[{q['id']}] kept from previous run", flush=True)
+        else:
             print(f"[{q['id']}] {q['question'][:70]}...", flush=True)
-            record: dict = {"id": q["id"], "type": q["type"], "question": q["question"]}
+            record = {"id": q["id"], "type": q["type"], "question": q["question"]}
             try:
                 answer = answer_question(q["question"])
-                results = run_checks(answer)
                 record["answer"] = answer.model_dump()
-                record["checks"] = results
-                rows.append((q["id"], results))
+                record["checks"] = run_checks(answer)
             except GenerationError as exc:
                 print(f"  generation failed: {exc}")
                 record["error"] = str(exc)
+        records.append(record)
+        if "checks" in record:
+            rows.append((record["id"], record["checks"]))
+
+    with RESULTS.open("w") as out:
+        for record in records:
             out.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     if rows:
