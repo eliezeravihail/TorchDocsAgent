@@ -11,6 +11,7 @@ from __future__ import annotations
 import ast
 import re
 import sys
+import textwrap
 
 from agent.schemas import Answer
 
@@ -24,7 +25,8 @@ ALLOWED_IMPORT_ROOTS = frozenset(sys.stdlib_module_names) | {
 
 
 def extract_code_blocks(answer_md: str) -> list[str]:
-    return [block.strip() for block in CODE_BLOCK_RE.findall(answer_md)]
+    # models often indent whole blocks (e.g. inside markdown lists) — dedent first
+    return [textwrap.dedent(block).strip() for block in CODE_BLOCK_RE.findall(answer_md)]
 
 
 def check_code_parses(answer: Answer) -> str | None:
@@ -54,8 +56,25 @@ def check_imports_allowed(answer: Answer) -> str | None:
     return None
 
 
+def _symbol_present(symbol: str, answer_md: str) -> bool:
+    """True if the symbol appears in any conventional spelling.
+
+    Answers legitimately write `nn.Linear` for torch.nn.Linear, `F.relu`
+    for torch.nn.functional.relu, or `.add_(...)` for torch.Tensor.add_ —
+    this check verifies bookkeeping consistency, not exact spelling.
+    """
+    parts = symbol.split(".")
+    candidates = {symbol}
+    if symbol.startswith("torch."):
+        candidates.add(symbol.removeprefix("torch."))
+    if len(parts) >= 2:
+        candidates.add(".".join(parts[-2:]))
+    candidates.add(parts[-1])
+    return any(c in answer_md for c in candidates)
+
+
 def check_symbols_present(answer: Answer) -> str | None:
-    missing = [s for s in answer.symbols_used if s not in answer.answer_md]
+    missing = [s for s in answer.symbols_used if not _symbol_present(s, answer.answer_md)]
     if missing:
         return f"symbols listed but not in answer: {', '.join(missing)}"
     return None

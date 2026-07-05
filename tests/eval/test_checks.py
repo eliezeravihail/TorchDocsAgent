@@ -36,3 +36,20 @@ def test_from_import_of_torch_allowed():
 def test_missing_symbol_caught():
     bad = GOOD.model_copy(update={"symbols_used": ["torch.nn.LSTM"]})
     assert "torch.nn.LSTM" in run_checks(bad)["symbols"]
+
+
+def test_aliased_symbol_accepted():
+    ok = GOOD.model_copy(
+        update={
+            "answer_md": "```python\nfrom torch import nn\nlayer = nn.Linear(3, 4)\n```",
+            "symbols_used": ["torch.nn.Linear"],
+        }
+    )
+    assert run_checks(ok)["symbols"] is None
+
+
+def test_indented_code_block_parses():
+    ok = GOOD.model_copy(
+        update={"answer_md": "```python\n    import torch\n    x = torch.ones(2)\n```"}
+    )
+    assert run_checks(ok)["parses"] is None
