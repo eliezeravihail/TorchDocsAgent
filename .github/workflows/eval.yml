@@ -31,7 +31,7 @@ jobs:
       - name: Run eval (resumes from committed results if present)
         env:
           TORCHDOCS_PROVIDER: ${{ inputs.provider }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GOOGLE_API }}
           OPENAI_COMPAT_BASE_URL: https://openrouter.ai/api/v1
           OPENAI_COMPAT_API_KEY: ${{ secrets.OPENROUTER }}
           TORCHDOCS_OPENAI_COMPAT_MODEL: ${{ inputs.model }}
