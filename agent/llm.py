@@ -138,19 +138,24 @@ def _answer_openai_compat(question: str, client, retries: int, timeout: float) -
         f"{Answer.model_json_schema()}"
     )
 
+    json_mode = True  # dropped for hosts/models that reject response_format
+
     def generate(messages):
+        nonlocal json_mode
         last_exc: Exception | None = None
         for attempt in range(retries):
+            kwargs = {"response_format": {"type": "json_object"}} if json_mode else {}
             try:
                 return client.chat.completions.create(
-                    model=OPENAI_COMPAT_MODEL,
-                    messages=messages,
-                    response_format={"type": "json_object"},
+                    model=OPENAI_COMPAT_MODEL, messages=messages, **kwargs
                 )
             except openai.APIError as exc:
                 last_exc = exc
-                is_rate_limit = getattr(exc, "status_code", None) == 429
-                time.sleep(20 * (attempt + 1) if is_rate_limit else 2**attempt)
+                status = getattr(exc, "status_code", None)
+                if json_mode and status in (400, 404, 422):
+                    json_mode = False  # host rejected JSON mode — prompt+repair covers it
+                    continue
+                time.sleep(20 * (attempt + 1) if status == 429 else 2**attempt)
         raise GenerationError(f"LLM call failed after {retries} attempts: {last_exc}")
 
     messages = [

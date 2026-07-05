@@ -1,0 +1,41 @@
+name: Eval
+
+# Runs the v0 eval on GitHub's runners (full network access, unlike the
+# development sandbox) and commits the results file back to the branch.
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: "generation provider"
+        type: choice
+        options: [openai-compat, gemini]
+        default: openai-compat
+
+permissions:
+  contents: write
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -e .
+      - name: Run eval (resumes from committed results if present)
+        env:
+          TORCHDOCS_PROVIDER: ${{ inputs.provider }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENAI_COMPAT_BASE_URL: https://openrouter.ai/api/v1
+          OPENAI_COMPAT_API_KEY: ${{ secrets.OPENROUTER }}
+          TORCHDOCS_OPENAI_COMPAT_MODEL: deepseek/deepseek-chat-v3.1:free
+        run: python -m eval.run_v0
+      - name: Commit results back to the branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f eval/results/v0.jsonl
+          git diff --cached --quiet || git commit -m "eval: v0 results from Actions run [skip ci]"
+          git push

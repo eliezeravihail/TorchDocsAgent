@@ -12,6 +12,10 @@ dependencies = [
     "anthropic>=0.40",
     "google-genai>=1",
     "openai>=1.50",
+    "requests>=2.31",
+    "beautifulsoup4>=4.12",
+    "markdownify>=0.13",
+    "PyYAML>=6",
 ]
 
 [project.optional-dependencies]

@@ -1,0 +1,67 @@
+from ingest.chunk_docs import chunk_page, page_kind, split_by_heading, write_units
+
+PAGE_MD = """Intro paragraph before any heading.
+
+# torch.optim.SGD
+
+Implements stochastic gradient descent.
+[source](https://github.com/pytorch/pytorch/blob/main/torch/optim/sgd.py#L26)
+
+## Parameters
+
+* lr (float) — learning rate
+
+```python
+optimizer = torch.optim.SGD(params, lr=0.01)
+```
+
+## Notes
+
+Momentum is optional.
+
+# See also
+
+Other optimizers.
+"""
+
+META = {
+    "url": "https://docs.pytorch.org/docs/stable/generated/torch.optim.SGD.html",
+    "title": "torch.optim.SGD — PyTorch docs",
+    "library": "core",
+    "content_hash": "abc123",
+}
+
+
+def test_split_by_heading_paths_and_anchors():
+    sections = split_by_heading(PAGE_MD)
+    assert sections[0].heading_path == []  # preamble
+    by_title = {s.title: s for s in sections if s.title}
+    assert by_title["Parameters"].heading_path == ["torch.optim.SGD", "Parameters"]
+    assert by_title["Notes"].heading_path == ["torch.optim.SGD", "Notes"]
+    assert by_title["See also"].heading_path == ["See also"]  # sibling h1 resets stack
+    assert by_title["Parameters"].anchor == "parameters"
+    assert "optimizer = torch.optim.SGD" in by_title["Parameters"].text
+
+
+def test_source_link_captured():
+    sections = split_by_heading(PAGE_MD)
+    sgd = next(s for s in sections if s.title == "torch.optim.SGD")
+    assert sgd.source_link.startswith("https://github.com/pytorch/pytorch/blob/")
+
+
+def test_chunk_page_units_and_kind():
+    units = chunk_page(META, PAGE_MD)
+    assert all(u["url"] == META["url"] for u in units)
+    assert all(u["kind"] == "api" for u in units)
+    assert page_kind("https://docs.pytorch.org/tutorials/beginner/intro.html") == "tutorial"
+
+
+def test_write_units_valid_okf(tmp_path):
+    import yaml
+
+    paths = write_units(chunk_page(META, PAGE_MD), tmp_path)
+    assert paths
+    _, frontmatter, body = paths[0].read_text().split("---\n", 2)
+    meta = yaml.safe_load(frontmatter)
+    assert {"url", "anchor", "heading_path", "library", "kind"} <= set(meta)
+    assert body.strip()
