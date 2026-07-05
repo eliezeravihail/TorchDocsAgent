@@ -19,11 +19,11 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
 
 ## M0 · Setup (1–2 days)
 
-- [ ] [CORE] New repo `torchdocs-agent` with the structure from the README (`ingest/`, `index/`, `agent/`, `eval/`, `app/`), `pyproject.toml`, `ruff`, `pytest`, pre-commit.
+- [x] [CORE] New repo `torchdocs-agent` with the structure from the README (`ingest/`, `index/`, `agent/`, `eval/`, `app/`), `pyproject.toml`, `ruff`, `pytest`, pre-commit.
   ✔ Done when: `pytest` runs green on a single placeholder test.
-- [ ] [CORE] Accounts: Neon (project + DB) and a Gemini API key (Google AI Studio — free tier; covers both generation and embeddings for M1–M2). Anthropic/OpenAI key and Langfuse — optional until M3/M4; the Max consumer subscription does not cover API usage, so a paid provider means loading Console credits separately.
+- [x] [CORE] Accounts: Neon (project + DB) and a Gemini API key (Google AI Studio — free tier; covers both generation and embeddings for M1–M2). Anthropic/OpenAI key and Langfuse — optional until M3/M4; the Max consumer subscription does not cover API usage, so a paid provider means loading Console credits separately.
   ✔ Done when: `psql $NEON_URL -c "select 1"` works and `.env.example` exists in the repo.
-- [ ] [CORE] `scripts/smoke.py`: one LLM call + a write/read against Neon.
+- [x] [CORE] `scripts/smoke.py`: one LLM call + a write/read against Neon.
   ✔ Done when: the script runs cleanly from the command line.
 
 ---
@@ -31,24 +31,24 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
 ## M1 · The Generation Core (Weeks 1–2)
 
 ### 1.1 Output schema
-- [ ] [CORE] `agent/schemas.py`: Pydantic model `Answer` with fields `answer_md: str` (markdown, may embed code snippets), `symbols_used: list[str]`, `torch_version: str` (citations and referrals join the schema in M2).
+- [x] [CORE] `agent/schemas.py`: Pydantic model `Answer` with fields `answer_md: str` (markdown, may embed code snippets), `symbols_used: list[str]`, `torch_version: str` (citations and referrals join the schema in M2).
   ✔ Done when: a round-trip test (dict → model → dict) passes.
 
 ### 1.2 LLM wrapper
-- [ ] [CORE] `agent/llm.py`: function `answer_question(question: str) -> Answer` with structured output, retry (up to 3, exponential backoff), and timeout.
+- [x] [CORE] `agent/llm.py`: function `answer_question(question: str) -> Answer` with structured output, retry (up to 3, exponential backoff), and timeout.
   ✔ Done when: 10 different questions return a valid `Answer` without exceptions.
-- [ ] [CORE] Parsing-failure handling: if the output doesn't fit the schema — one repair attempt with the error message, otherwise return a clean error.
+- [x] [CORE] Parsing-failure handling: if the output doesn't fit the schema — one repair attempt with the error message, otherwise return a clean error.
   ✔ Done when: a test with a mock that returns broken JSON passes.
 
 ### 1.3 First eval — from day one
-- [ ] [CORE] `eval/checks.py`: three static checks on every `Answer`: (a) every code block in `answer_md` passes `ast.parse`; (b) every `import` in those blocks is torch/standard library; (c) every symbol in `symbols_used` actually appears in the answer.
+- [x] [CORE] `eval/checks.py`: three static checks on every `Answer`: (a) every code block in `answer_md` passes `ast.parse`; (b) every `import` in those blocks is torch/standard library; (c) every symbol in `symbols_used` actually appears in the answer.
   ✔ Done when: the checks run on 10 answers and print a pass/fail table.
-- [ ] [CORE] `eval/questions_v0.jsonl`: 15 manual questions covering the five question types (usage: "how do I use SGD?"; catalog: "what LR schedulers exist?"; recipe: "how do I build a sequence network to detect cats?", "how do I generate music?"; source: "how is conv2d implemented?"; edge: "how do I run a fraud-detection model in the browser?").
+- [x] [CORE] `eval/questions_v0.jsonl`: 15 manual questions covering the five question types (usage: "how do I use SGD?"; catalog: "what LR schedulers exist?"; recipe: "how do I build a sequence network to detect cats?", "how do I generate music?"; source: "how is conv2d implemented?"; edge: "how do I run a fraud-detection model in the browser?").
   ✔ Done when: the file exists and `eval/run_v0.py` runs all of them and saves results.
-- [ ] [CORE] **Document hallucinations**: run the 15 questions, manually review the code, and record in `eval/hallucinations.md` every invented API or wrong signature, as an OKF unit (YAML frontmatter with `question_id`, `torch_version`, `severity` + a markdown body per finding).
+- [x] [CORE] **Document hallucinations**: run the 15 questions, manually review the code, and record in `eval/hallucinations.md` every invented API or wrong signature, as an OKF unit (YAML frontmatter with `question_id`, `torch_version`, `severity` + a markdown body per finding).
   ✔ Done when: at least 3 examples are documented. *(This is the measurable justification for M2 — don't skip it.)*
 
-**Gate to M2:** a working generator + the 15-question set + a documented hallucination list.
+**Gate to M2: ✅ MET (2026-07-05).** Generator works on 3 provider paths; 15/15 v0 answers (poolside/laguna via OpenRouter, on Actions); 5 hallucination findings documented in eval/hallucinations.md.
 
 ---
 
