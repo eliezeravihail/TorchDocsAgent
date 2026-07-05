@@ -151,7 +151,9 @@ def _answer_anthropic(question: str, client, retries: int, timeout: float) -> An
             break
         except anthropic.APIError as exc:
             last_exc = exc
-            time.sleep(2**attempt)
+            # free-tier RPM window is a minute — wait it out on 429
+            is_rate_limit = getattr(exc, "status_code", None) == 429
+            time.sleep(20 * (attempt + 1) if is_rate_limit else 2**attempt)
     else:
         raise GenerationError(f"LLM call failed after {retries} attempts: {last_exc}")
 
