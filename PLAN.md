@@ -1,6 +1,7 @@
 # TorchDocs Agent — Detailed Execution Plan (TODO level)
 
 Working document for execution. Every task is written so it can be picked up and completed independently, with an **acceptance criterion** ("done when...") and a time estimate.
+For the architectural "how" behind these tasks — content extraction cadence, agent access levels, session lifecycle, LangChain vs LangGraph, and live-link mapping — see [docs/design-content-and-agent-flow.md](docs/design-content-and-agent-flow.md).
 Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do not start STRETCH work before all CORE tasks of that milestone are green.
 
 **Binding decisions (do not reopen during execution):**
