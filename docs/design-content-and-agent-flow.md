@@ -3,7 +3,7 @@ title: "Design: Content Pipeline, Agent Access, Session Flow, Orchestration, and
 kind: design
 status: accepted
 date: 2026-07-05
-corpus: "pytorch.org documentation site (docs + tutorials + get-started)"
+corpus: "pytorch.org documentation site (core docs + tutorials + get-started + torchvision/torchaudio; other domain-library doc sets as v1.1 seeds)"
 reference_product: "Ultralytics Docs 'Ask AI' widget (kapa.ai pattern)"
 sandbox: none — answers are docs-grounded explanations with illustrative snippets, not executed code
 related_milestones: [M2, M3, M5]
@@ -32,7 +32,7 @@ The canonical examples (from the product owner) and what each demands of the sys
 | **Usage** | "How do I use SGD?" | The API's purpose, signature, a short snippet from/based on its docs page | Single-page retrieval, precise anchor |
 | **Catalog** | "What LR schedulers exist?" | An enumerated list with one-liners and links | Retrieval must surface the *overview* page (e.g. `torch.optim` lists all schedulers on one page) — heading-chunking keeps such lists intact |
 | **Recipe** | "How do I build a sequence network to detect cats?", "How do I generate music?" | A guided plan stitched from several tutorials/doc sections: data loading → model choice → training loop, each step cited | **Query decomposition**: one question → several retrieval queries, one per step |
-| **Edge / partially covered** | "How do I run a fraud-detection model in the browser?" | What the docs do cover (e.g. export paths, ExecuTorch/ONNX pointers) + an honest "the rest is outside these docs" with referral links | The grade step must detect partial coverage and switch to answer-plus-referral instead of bluffing |
+| **Edge / partially covered** | "How do I run a fraud-detection model in the browser?" | What the docs do cover (export paths; ExecuTorch's own doc set is a v1.1 seed, §1.1) + an honest "the rest is outside these docs" with referral links | The grade step must detect partial coverage and switch to answer-plus-referral instead of bluffing |
 
 Recipe questions are the design driver: they are why the flow has a decomposition step and why answers cite *multiple* pages.
 
@@ -42,16 +42,23 @@ Recipe questions are the design driver: they are why the flow has a decompositio
 
 ### 1.1 What the corpus is
 
-The content of the public PyTorch documentation site, ingested per **site section** (seed list, configurable):
+The content of the public PyTorch documentation site. A survey of docs.pytorch.org shows it hosts far more than the core docs: it is the umbrella for the **domain-library doc sets** too (torchvision, torchaudio, ExecuTorch, torchao, TorchRL, torchtune, torchrec, tensordict, XLA, torchtitan, …), each a Sphinx site with its own `objects.inv` — so the same discover→crawl pipeline covers all of them; adding one is a seed-list line, not new code.
 
-| Section | URL family | In v1? |
-|---|---|---|
-| API reference | `docs.pytorch.org/docs/{version}/**` | ✔ core |
-| Tutorials | `docs.pytorch.org/tutorials/**` | ✔ core |
-| Get-started / install matrix | `pytorch.org/get-started/**` | ✔ core |
-| Blog, ecosystem, hub | `pytorch.org/blog/**`, … | ✘ later (add a section = add a seed) |
+The seed list is therefore **tiered**:
 
-**Not in the corpus, by decision:** the PyTorch source code on GitHub. The agent never indexes or quotes implementation internals; it refers the user out (§2.2, §5.3).
+| Tier | Section | URL family | Why |
+|---|---|---|---|
+| **v1 core** | Core API reference | `docs.pytorch.org/docs/{version}/**` | The heart of every usage/catalog question |
+| **v1 core** | Tutorials | `docs.pytorch.org/tutorials/**` | The backbone of recipe answers |
+| **v1 core** | Get-started / install matrix | `pytorch.org/get-started/**` | Install/setup questions |
+| **v1 core** | torchvision | `docs.pytorch.org/vision/stable/**` | Vision recipes — models, datasets, transforms ("detect cats") |
+| **v1 core** | torchaudio | `docs.pytorch.org/audio/stable/**` | Audio recipes ("generate music") |
+| **v1.1 seeds** | ExecuTorch, torchao, torchtune, TorchRL, torchrec, tensordict, XLA, torchtitan | `docs.pytorch.org/{lib}/**` | Deployment/edge, quantization, LLM fine-tuning, RL, recsys — added per demand, config-only |
+| **referral-only** | Blog, ecosystem/landscape, Hub, forums (`discuss.pytorch.org`) | — | Never indexed: unversioned or community content; the agent *links* to them (§5.3) |
+
+Every chunk carries a `library` field (`core`, `vision`, `audio`, …) so retrieval can be filtered or routed per question.
+
+**Not in the corpus, by decision:** the PyTorch source code on GitHub, and community forums. The agent never indexes or quotes implementation internals or unofficial answers; it refers the user out (§2.2, §5.3).
 
 ### 1.2 How extraction works (the ingestion pipeline)
 
@@ -63,7 +70,7 @@ discover   enumerate every page: Sphinx inventory (objects.inv) for the API
            save each page to the on-disk snapshot `_corpus/<url-path>.md`
            (+ per-page metadata: url, title, section path, content_hash, crawl date)
   → chunk  split each page by heading; a chunk = one section, with metadata
-           {url, anchor, page_title, heading_path, kind: api|tutorial|guide}.
+           {url, anchor, page_title, heading_path, library, kind: api|tutorial|guide}.
            Code blocks inside a section stay attached to that section's chunk.
            API pages also record their `[source]` GitHub link as metadata.
   → embed  batch embeddings + tsvector → upsert into Neon, keyed by
@@ -201,7 +208,7 @@ Rule of thumb: a fixed sequence of steps → a chain is enough; a loop of "decid
 Because the corpus is the site itself, this problem mostly dissolves. A citation is `{url, anchor, page_title, heading_path}` — the stored pointer is already the live link:
 
 ```
-https://docs.pytorch.org/docs/2.7/generated/torch.optim.SGD.html#torch.optim.SGD
+https://docs.pytorch.org/docs/2.12/generated/torch.optim.SGD.html#torch.optim.SGD
 https://docs.pytorch.org/tutorials/beginner/basics/optimization_tutorial.html#full-implementation
 ```
 
@@ -214,7 +221,7 @@ The one real risk is **drift**: the live page changing after the crawl, so the u
 | Risk | Mitigation |
 |---|---|
 | Page edited after crawl | Weekly recrawl with hash-diff (§1.3) keeps the window small; each citation carries its crawl date |
-| API reference moves on release | Answers cite the **versioned** docs URL (`/docs/2.7/…`, matching the index), not `/stable/` — the versioned tree is immutable once published |
+| API reference moves on release | Answers cite the **versioned** docs URL (`/docs/2.12/…`, matching the index), not `/stable/` — the versioned tree is immutable once published |
 | Page deleted / URL restructured | Recrawl marks vanished `(url, anchor)` rows dead → excluded from retrieval; STRETCH (M5): HTTP-200 sweep per index build |
 | Anchor renamed within a page | Fall back to the bare page URL — worse UX, never a broken link |
 
