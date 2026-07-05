@@ -11,3 +11,19 @@ AI-powered chat agent for PyTorch — ask questions about the library, get code 
 - Stay easy to run locally with minimal setup.
 
 See [PLAN.md](PLAN.md) for the current roadmap and TODO list.
+
+## Building the index
+
+One command crawls the docs site and embeds everything into Neon
+(requires `GEMINI_API_KEY` and `NEON_URL` in `.env`; must run on a machine
+with open internet access):
+
+```bash
+pip install -e .
+python scripts/build_index.py
+```
+
+Safe to interrupt: crawling skips unchanged pages, embedding skips chunks
+already in the DB, and every batch commits — re-running continues where it
+stopped. `--skip-crawl` re-embeds the existing snapshot; `--libraries
+core,tutorials` limits the run to part of the seed list.
