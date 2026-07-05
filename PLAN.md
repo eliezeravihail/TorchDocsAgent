@@ -5,9 +5,9 @@ For the architectural "how" behind these tasks — content extraction cadence, a
 Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do not start STRETCH work before all CORE tasks of that milestone are green.
 
 **Binding decisions (do not reopen during execution):**
-- Pinned PyTorch version: **torch 2.7.x** — the index, the sandbox, and eval all run on the same version.
-- Corpus scope: **only** `torch/nn`, `torch/optim`, `torch/utils/data`, `torch/nn/functional`, `torch/autograd` + their official docs. No C++, no CUDA, no internals.
-- **Pointer-based storage:** the DB does not store raw code — only embeddings, tsvector, and metadata (path, lines, symbol, signature). The single source of truth is the pinned clone; content is read from it at query time (hydrate).
+- Pinned PyTorch version: **2.7.x** — the docs index (`docs/2.7` tree), the sandbox, and eval all run on the same version.
+- Corpus scope: the **public documentation site** — API reference (`docs.pytorch.org/docs/{version}`), tutorials, and get-started pages. **Source code is not indexed**: for implementation questions the agent refers the user out via the `[source]` links captured at crawl time. (Supersedes the earlier five-source-modules scope — see `docs/design-content-and-agent-flow.md`.)
+- **Pointer-based storage:** the DB does not store page text — only embeddings, tsvector, and pointers (`url`, `anchor`, page title, heading path, content hash). The source of truth for the index is the on-disk crawl snapshot; content is read from it at query time (hydrate), and citations link to the live URLs.
 - Language: Python 3.11+. All LLM calls go through LiteLLM starting from day one of M3 (before that — direct SDK).
 - **Open Knowledge Format (OKF)** — Google's markdown + YAML-frontmatter convention for agent-readable knowledge — is used wherever we hand-author or generate *knowledge documents* consumed by agents or humans: doc chunks (2.1), and all `docs/*.md` reports (hallucinations, error-analysis, loop-vs-langgraph). It is **not** used for the `chunks` DB schema or code chunking: that data is pointer-based (no stored content) and already has its own typed columns, so wrapping it in OKF would add a translation layer with no consumer. Use OKF where it replaces ad-hoc formatting, not where it duplicates an existing schema.
 
@@ -51,30 +51,30 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
 ## M2 · Grounding (Weeks 3–4)
 
 ### 2.1 Ingestion
-- [ ] [CORE] `ingest/clone.py`: download torch 2.7 (pinned tag, `--depth 1`) and filter to in-scope directories only.
-  ✔ Done when: the `_corpus/` directory contains only files from the in-scope modules (hundreds of files, not thousands).
-- [ ] [CORE] `ingest/chunk_code.py`: structure-aware code chunking using the `ast` module — one chunk per function/class, with metadata: `file_path`, `start_line`, `end_line`, `symbol_name`, docstring.
-  ✔ Done when: running on `torch/nn/modules/linear.py` produces separate chunks for `Linear`, `Bilinear`, etc., with correct line ranges.
-- [ ] [CORE] `ingest/chunk_docs.py`: chunk the rst/markdown doc files by heading, same metadata schema. Emit each chunk as an **OKF-style unit**: YAML frontmatter (`file_path`, `start_line`, `end_line`, `symbol_name`, `kind`) over a markdown body, before it's split into DB columns — this is the one point in the pipeline where an intermediate on-disk artifact is worth having, since it's a human/agent-readable knowledge snapshot of the docs corpus, not just a DB-loading step.
-  ✔ Done when: a sample of 5 files chunks sensibly under manual review, and the OKF units are valid (frontmatter parses, required keys present).
+- [ ] [CORE] `ingest/discover.py`: enumerate the page list — parse Sphinx `objects.inv` for the API reference (symbol → page + anchor) and the sitemap/toctree for tutorials and get-started; emit a seed-scoped URL list.
+  ✔ Done when: the list covers the `docs/2.7` API tree + tutorials (thousands of URLs, not tens of thousands), and `torch.nn.Linear` maps to its exact page + anchor.
+- [ ] [CORE] `ingest/crawl.py`: fetch rendered pages, strip nav/chrome, convert HTML → markdown, and save to the `_corpus/` snapshot with per-page metadata (`url`, `title`, `section_path`, `content_hash`, crawl date). Idempotent: unchanged `content_hash` → skip.
+  ✔ Done when: a re-run over an unchanged site fetches but re-processes ~0 pages, and 5 sampled pages read cleanly as markdown.
+- [ ] [CORE] `ingest/chunk_docs.py`: chunk each snapshot page by heading — a chunk is one section, code blocks stay attached to their section, and API pages record their `[source]` GitHub link as metadata. Emit each chunk as an **OKF-style unit**: YAML frontmatter (`url`, `anchor`, `page_title`, `heading_path`, `kind`) over a markdown body — a human/agent-readable knowledge snapshot of the docs corpus, not just a DB-loading step.
+  ✔ Done when: a sample of 5 pages chunks sensibly under manual review, and the OKF units are valid (frontmatter parses, required keys present).
 
 ### 2.2 Indexing in Neon
-- [ ] [CORE] Table schema: `chunks(id, embedding vector, tsv tsvector, file_path, start_line, end_line, symbol_name, signature, kind)` — **no raw content column**. The tsvector is computed at index time (from content that is read but not stored) and is sufficient for keyword search. HNSW index on embedding + GIN on tsv.
-  ✔ Done when: a migration runs clean, and `select * from chunks limit 1` contains no code — only vectors and metadata.
-- [ ] [CORE] `index/embed.py`: compute embeddings in batches (resilient to mid-run failure — checkpointing), and insert into Neon.
-  ✔ Done when: the entire corpus is indexed; `count(*)` is sensible; re-running doesn't duplicate rows.
+- [ ] [CORE] Table schema: `chunks(id, embedding vector, tsv tsvector, url, anchor, page_title, heading_path, source_link, kind, content_hash, index_version)` — **no raw content column**. The tsvector is computed at index time (from content that is read but not stored) and is sufficient for keyword search. HNSW index on embedding + GIN on tsv; unique on `(url, anchor, index_version)`.
+  ✔ Done when: a migration runs clean, and `select * from chunks limit 1` contains no page text — only vectors and metadata.
+- [ ] [CORE] `index/embed.py`: compute embeddings in batches (resilient to mid-run failure — checkpointing), and upsert into Neon; unchanged `content_hash` → skip (this is what makes the weekly recrawl cheap).
+  ✔ Done when: the entire corpus is indexed; `count(*)` is sensible; re-running over an unchanged snapshot embeds 0 chunks.
 
 ### 2.3 Hybrid retrieval
-- [ ] [CORE] `index/retrieve.py`: function `retrieve(query, k=8)` that merges dense (pgvector) + keyword (tsvector) search with simple RRF ranking. Returns **pointers** (path + line range), not content.
-  ✔ Done when: searching `scaled_dot_product_attention` returns the pointer to the real definition as the top result (dense alone fails this — that's the test).
-- [ ] [CORE] `index/hydrate.py`: read the actual lines from the pinned clone based on the pointers, ready for prompt injection.
-  ✔ Done when: hydrating a retrieve result returns exactly the function, and a test confirms the metadata matches the file content.
+- [ ] [CORE] `index/retrieve.py`: function `retrieve(query, k=8)` that merges dense (pgvector) + keyword (tsvector) search with simple RRF ranking. Returns **pointers** (`url` + `anchor`), not content.
+  ✔ Done when: searching `scaled_dot_product_attention` returns the pointer to its API-reference section as the top result (dense alone fails this — that's the test).
+- [ ] [CORE] `index/hydrate.py`: read the actual sections from the crawl snapshot based on the pointers, ready for prompt injection.
+  ✔ Done when: hydrating a retrieve result returns exactly the section, and a test confirms the metadata matches the snapshot content.
 - [ ] [STRETCH] reranker (small cross-encoder or LLM-rerank) over the top-20.
 
 ### 2.4 Wiring and evaluation
-- [ ] [CORE] Update `generate_code`: retrieve → hydrate → inject the snippets into the prompt with an explicit instruction "use only APIs that appear in the context", and add `citations: list[{file_path, lines}]` to the schema.
-  ✔ Done when: answers include real citations that can be opened in the file.
-  *Note: from this point the pinned clone is a runtime dependency — it goes into the deploy image in M5.*
+- [ ] [CORE] Update `generate_code`: retrieve → hydrate → inject the sections into the prompt with an explicit instruction "answer only from the provided context; if it's not there, say so and refer via the `[source]`/search link", and add `citations: list[{url, anchor, page_title}]` to the schema.
+  ✔ Done when: answers include real citations that open in a browser on the exact section.
+  *Note: from this point the crawl snapshot is a runtime dependency — it goes into the deploy image (or a mounted volume) in M5.*
 - [ ] [CORE] Dedicated metric `grounded_api_rate`: percentage of symbols in `symbols_used` that exist in the index. Run on the 15 M1 questions, compare before/after RAG.
   ✔ Done when: there is one table showing the improvement — also great material for the README.
 - [ ] [STRETCH] RAGAS on the question set (context precision/recall, faithfulness).
@@ -133,6 +133,8 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
 - [ ] [CORE] Minimal Gradio interface: question field, answer with highlighted code, clickable citations, and a "code runs ✓" indicator.
 - [ ] [CORE] Deploy on a free tier — pick one: HF Spaces (fastest), Modal (more impressive, includes the sandbox), or Railway.
   ✔ Done when: a public link works from a clean browser, including a full query.
+- [ ] [CORE] Scheduled recrawl: a weekly job (cron / GitHub Action) that runs discover → crawl → embed incrementally (hash-diff), bumps `index_version` only when content changed, and logs how many pages changed.
+  ✔ Done when: two consecutive runs against an unchanged site produce a "0 pages changed" log line and no new rows.
 - [ ] [CORE] Basic auth: an API key per user (table in Neon), rate limit per key, and every code run tagged to a key.
   ✔ Done when: a request without a key is rejected; one key cannot exceed its quota.
   *Note: not full OAuth. API keys are enough to demonstrate multi-user support.*
