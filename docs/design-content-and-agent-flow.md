@@ -52,7 +52,7 @@ The seed list is **tiered**:
 
 | Tier | Section | URL family |
 |---|---|---|
-| **v1 core** | Core API reference | `docs.pytorch.org/docs/{version}/**` |
+| **v1 core** | Core API reference | `docs.pytorch.org/docs/stable/**` (always the latest release) |
 | **v1 core** | Tutorials | `docs.pytorch.org/tutorials/**` |
 | **v1 core** | Get-started / install matrix | `pytorch.org/get-started/**` |
 | **v1 core** | torchvision, torchaudio | `docs.pytorch.org/{vision,audio}/stable/**` |
@@ -90,10 +90,10 @@ Key properties:
 | Trigger | Watched signal | What runs | Cadence |
 |---|---|---|---|
 | Scheduled recrawl | `content_hash` of every rendered page | discover → fetch → hash-compare → re-chunk + re-embed **changed pages only** | weekly (cron); cheap because most pages are unchanged |
-| New PyTorch release | GitHub Releases API of `pytorch/pytorch` (`ingest/watch.py`) — a new stable tag | full pipeline against the new `docs/{version}` tree → new `index_version` | checked daily; fires a few times a year |
+| New PyTorch release | GitHub Releases API of `pytorch/pytorch` (`ingest/watch.py`) — a new stable tag | kicks the same recrawl **immediately** instead of waiting for the weekly slot; `/docs/stable/` now serves the new release, so the hash-diff re-embeds everything that changed | checked daily; fires a few times a year |
 | Chunker / embedding-model change | (manual — the only human decision left) | re-chunk / re-embed from the existing snapshot (no crawl) | during development |
 
-**Embedding refresh is a by-product, not a decision.** A page whose hash changed gets its chunks re-embedded automatically; an unchanged page costs nothing. Note the watched signals deliberately exclude *commits* to `pytorch/pytorch`: hundreds land daily and almost none change the rendered versioned docs tree — the release tag and the page hashes are the signals that actually correlate with corpus change.
+**Embedding refresh is a by-product, not a decision — and there is no version management.** The policy is *always-latest*: the index tracks whatever `/docs/stable/` serves today. A release is not a project event; it's just a week with a large hash-diff (effectively a full re-embed, ~a dollar, automatic). A page whose hash changed gets its chunks re-embedded; an unchanged page costs nothing. The watched signals deliberately exclude *commits* to `pytorch/pytorch`: hundreds land daily and almost none change the rendered docs site — the release tag and the page hashes are the signals that actually correlate with corpus change.
 
 Two invariants: every answer is **stamped** with the `index_version` and crawl date of the pages it cites, and **cache keys include `index_version`** (M4), so a recrawl that changed content automatically invalidates affected cached answers.
 
@@ -203,18 +203,20 @@ The heart of §3.2 is a **tool-calling loop** — the canonical agent cycle (dec
 A citation is `{url, anchor, page_title, heading_path}` — the stored pointer is already the live link:
 
 ```
-https://docs.pytorch.org/docs/2.12/generated/torch.optim.SGD.html#torch.optim.SGD
+https://docs.pytorch.org/docs/stable/generated/torch.optim.SGD.html#torch.optim.SGD
 https://docs.pytorch.org/tutorials/beginner/basics/optimization_tutorial.html#full-implementation
 ```
 
 Anchors come for free: Sphinx generates a stable `id` per symbol and heading, and `objects.inv` provides the authoritative symbol→(page, anchor) mapping.
+
+Citations deliberately use the **`/stable/` URLs, not version-frozen ones** — the always-latest policy: the link the user clicks is the same "latest" the index tracks, and never goes stale as releases roll.
 
 ### 5.2 Keeping the link honest
 
 | Risk | Mitigation |
 |---|---|
 | Page edited after crawl | Weekly recrawl with hash-diff keeps the window small; citations carry their crawl date |
-| API reference moves on release | Cite the **versioned** docs URL (`/docs/2.12/…`, matching the index), not `/stable/` — the versioned tree is immutable once published |
+| `/stable/` flips to a new release right after our crawl | The release watcher (§1.3) kicks an immediate recrawl, shrinking the mismatch window to hours |
 | Page deleted / restructured | Recrawl marks vanished `(url, anchor)` rows dead → excluded from retrieval; STRETCH: HTTP-200 sweep per index build |
 | Anchor renamed within a page | Fall back to the bare page URL — worse UX, never a broken link |
 
@@ -234,4 +236,4 @@ Citations render as `page title › section — link`; referrals as `beyond thes
 2. **Access**: three bounded tools — `search_docs` (hybrid, repeatable), `read_page` (whole-page hydrate), `ask_source` (DeepWiki MCP, referral-mandatory) — plus never-citable parametric knowledge. No sandbox, no open web.
 3. **Session**: stateless per question; cache → bounded agent loop → generate → static check → finalize; delivery on declared coverage + passing checks, or on budget exhaustion with an honest gap answer.
 4. **LangChain vs LangGraph**: LangChain not used; LangGraph is the second implementation of the tool loop (the textbook LangGraph shape) and becomes necessary with checkpointing, human-in-the-loop, or parallel tool fan-out.
-5. **Live links**: the stored pointer *is* the live URL+anchor (versioned docs tree); drift bounded by weekly recrawl; referrals (GitHub `[source]`, DeepWiki, code search) are first-class and visually distinct from citations.
+5. **Live links**: the stored pointer *is* the live URL+anchor (`/stable/` — always-latest by policy); drift bounded by the weekly recrawl plus a release-triggered immediate recrawl; referrals (GitHub `main` `[source]`, DeepWiki, code search) are first-class and visually distinct from citations.

@@ -5,7 +5,7 @@ For the architectural "how" behind these tasks — content extraction cadence, a
 Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do not start STRETCH work before all CORE tasks of that milestone are green.
 
 **Binding decisions (do not reopen during execution):**
-- Pinned PyTorch version: **the current stable at first index build — 2.12.x as of July 2026** — the docs index (`docs/2.12` tree) and eval run against the same version; a version bump is a full re-index.
+- **Always-latest, no version pinning:** the index tracks what the site serves under `docs.pytorch.org/docs/stable/` (which always points at the latest release) and the current tutorials. A PyTorch release is not a project event — it just shows up as a large hash-diff on the next recrawl and re-embeds automatically. Source referrals point at GitHub `main` (what you see when you open the repo today). `index_version` remains an internal crawl-build id (for cache invalidation and eval comparability), decoupled from PyTorch version numbers.
 - **No code execution.** Answers are docs-grounded explanations with illustrative snippets, statically checked (parse, imports, symbols-exist-in-index) but never run. There is no sandbox, no Docker runner, no run-fix loop.
 - **Agent-with-tools architecture**, not a fixed pipeline: the LLM iterates over three bounded tools — `search_docs` (hybrid retrieval, repeatable with reformulated queries), `read_page` (whole-page hydrate), `ask_source` (DeepWiki MCP) — until it declares coverage or a budget trips. See `docs/design-content-and-agent-flow.md` §2–3.
 - **Source-code questions via DeepWiki, never via our own index**: `ask_source` calls DeepWiki's public MCP server on `pytorch/pytorch`; every claim derived from it carries a referral link (`[source]` on the API page / DeepWiki / GitHub search). If DeepWiki is down, the tool degrades to returning referral links only.
@@ -55,7 +55,7 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
 
 ### 2.1 Ingestion
 - [ ] [CORE] `ingest/discover.py`: enumerate the page list — parse Sphinx `objects.inv` for the API reference (symbol → page + anchor) and the sitemap/toctree for tutorials and get-started; emit a seed-scoped URL list.
-  ✔ Done when: the list covers the `docs/2.12` API tree, tutorials, and the torchvision/torchaudio doc sets (thousands of URLs, not tens of thousands), and `torch.nn.Linear` maps to its exact page + anchor.
+  ✔ Done when: the list covers the `docs/stable` API tree, tutorials, and the torchvision/torchaudio doc sets (thousands of URLs, not tens of thousands), and `torch.nn.Linear` maps to its exact page + anchor.
 - [ ] [CORE] `ingest/crawl.py`: fetch rendered pages, strip nav/chrome, convert HTML → markdown, and save to the `_corpus/` snapshot with per-page metadata (`url`, `title`, `section_path`, `content_hash`, crawl date). Idempotent: unchanged `content_hash` → skip.
   ✔ Done when: a re-run over an unchanged site fetches but re-processes ~0 pages, and 5 sampled pages read cleanly as markdown.
 - [ ] [CORE] `ingest/chunk_docs.py`: chunk each snapshot page by heading — a chunk is one section, code blocks stay attached to their section, and API pages record their `[source]` GitHub link as metadata. Emit each chunk as an **OKF-style unit**: YAML frontmatter (`url`, `anchor`, `page_title`, `heading_path`, `kind`) over a markdown body — a human/agent-readable knowledge snapshot of the docs corpus, not just a DB-loading step.
@@ -139,8 +139,8 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
   ✔ Done when: a public link works from a clean browser, including a full query.
 - [ ] [CORE] Scheduled recrawl: a weekly job (cron / GitHub Action) that runs discover → crawl → embed incrementally (hash-diff), bumps `index_version` only when content changed, and logs how many pages changed.
   ✔ Done when: two consecutive runs against an unchanged site produce a "0 pages changed" log line and no new rows.
-- [ ] [CORE] `ingest/watch.py` — release watcher: a daily job that polls the GitHub Releases API of `pytorch/pytorch`; a new stable tag opens an issue / sends a notification and can trigger the full-rebuild pipeline for the new `docs/{version}` tree. Watches **releases, not commits** — commits are noise relative to the rendered versioned docs.
-  ✔ Done when: pointing it at a mocked "new release" response triggers the rebuild path; a normal day produces a single "no new release" log line.
+- [ ] [CORE] `ingest/watch.py` — release watcher: a daily job that polls the GitHub Releases API of `pytorch/pytorch`; a new stable tag immediately kicks the recrawl job instead of waiting for the weekly slot (the recrawl itself handles everything via hash-diff). Watches **releases, not commits** — commits are noise relative to the rendered docs site.
+  ✔ Done when: pointing it at a mocked "new release" response triggers a recrawl; a normal day produces a single "no new release" log line.
 - [ ] [CORE] Basic auth: an API key per user (table in Neon), rate limit per key, and every request tagged to a key.
   ✔ Done when: a request without a key is rejected; one key cannot exceed its quota.
   *Note: not full OAuth. API keys are enough to demonstrate multi-user support.*
