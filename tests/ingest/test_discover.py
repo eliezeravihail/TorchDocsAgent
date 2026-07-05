@@ -35,6 +35,22 @@ def test_parse_objects_inv_expands_dollar_and_anchor():
     assert entries[1].page_url == f"{BASE}optim.html"
 
 
+def test_parse_objects_inv_name_with_spaces():
+    # std:label / std:doc names may contain spaces — the naive split bug
+    # turned words of the name into fake page URLs (each 404ing in the crawl)
+    inv = make_inv(
+        [
+            "PyTorch Contribution Guide std:doc -1 community/contribution_guide.html "
+            "PyTorch Contribution Guide",
+            "torch.nn.Linear py:class 1 generated/torch.nn.Linear.html#$ -",
+        ]
+    )
+    entries = parse_objects_inv(inv, BASE)
+    assert entries[0].name == "PyTorch Contribution Guide"
+    assert entries[0].page_url == f"{BASE}community/contribution_guide.html"
+    assert entries[1].page_url == f"{BASE}generated/torch.nn.Linear.html"
+
+
 def test_parse_objects_inv_rejects_wrong_version():
     with pytest.raises(ValueError, match="unsupported"):
         parse_objects_inv(b"# Sphinx inventory version 1\nrest", BASE)
