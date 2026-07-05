@@ -20,6 +20,7 @@ from dotenv import load_dotenv
 
 PASS = "✓"
 FAIL = "✗"
+SKIP = "__skip__"  # sentinel: check not configured and not required
 
 
 def check_neon() -> str | None:
@@ -42,10 +43,26 @@ def check_neon() -> str | None:
     return None
 
 
-def check_llm() -> str | None:
+def check_gemini_llm() -> str | None:
+    key = os.environ.get("GEMINI_API_KEY")
+    if not key:
+        return "GEMINI_API_KEY is not set (get one free at aistudio.google.com)"
+    from google import genai
+
+    client = genai.Client(api_key=key)
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents="Reply with the single word: pong",
+    )
+    if "pong" not in (response.text or "").lower():
+        return f"unexpected reply: {response.text!r}"
+    return None
+
+
+def check_anthropic_llm() -> str | None:
     key = os.environ.get("ANTHROPIC_API_KEY")
     if not key:
-        return "ANTHROPIC_API_KEY is not set"
+        return SKIP  # optional until M3
     import anthropic
 
     client = anthropic.Anthropic(api_key=key, timeout=60)
@@ -81,21 +98,27 @@ def main() -> int:
     load_dotenv()
     checks = [
         ("Neon Postgres (write/read)", check_neon),
-        ("Anthropic LLM (one message)", check_llm),
+        ("Gemini LLM (one message)", check_gemini_llm),
         ("Gemini embedding (one vector)", check_embedding),
+        ("Anthropic LLM (optional until M3)", check_anthropic_llm),
     ]
     failures = 0
+    skipped = 0
     for name, fn in checks:
         try:
             error = fn()
         except Exception as exc:  # a broken connection should report, not crash the run
             error = f"{type(exc).__name__}: {exc}"
-        if error:
+        if error == SKIP:
+            skipped += 1
+            print(f"- {name}: skipped (no key)")
+        elif error:
             failures += 1
             print(f"{FAIL} {name}: {error}")
         else:
             print(f"{PASS} {name}")
-    print(f"\n{len(checks) - failures}/{len(checks)} checks passed")
+    required = len(checks) - skipped
+    print(f"\n{required - failures}/{required} required checks passed")
     return 1 if failures else 0
 
 
