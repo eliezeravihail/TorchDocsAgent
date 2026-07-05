@@ -35,6 +35,7 @@ jobs:
       - run: pip install -e .
       - name: Build index
         env:
+          PYTHONUNBUFFERED: "1" # stream progress lines to the log in real time
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           NEON_URL: ${{ secrets.NEON_URL }}
         run: |
