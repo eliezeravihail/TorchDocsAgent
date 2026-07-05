@@ -5,7 +5,8 @@ For the architectural "how" behind these tasks — content extraction cadence, a
 Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do not start STRETCH work before all CORE tasks of that milestone are green.
 
 **Binding decisions (do not reopen during execution):**
-- Pinned PyTorch version: **2.7.x** — the docs index (`docs/2.7` tree), the sandbox, and eval all run on the same version.
+- Pinned PyTorch version: **2.7.x** — the docs index (`docs/2.7` tree) and eval run against the same version; a version bump is a full re-index.
+- **No code execution.** Answers are docs-grounded explanations with illustrative snippets, statically checked (parse, imports, symbols-exist-in-index) but never run. There is no sandbox, no Docker runner, no run-fix loop.
 - Corpus scope: the **public documentation site** — API reference (`docs.pytorch.org/docs/{version}`), tutorials, and get-started pages. **Source code is not indexed**: for implementation questions the agent refers the user out via the `[source]` links captured at crawl time. (Supersedes the earlier five-source-modules scope — see `docs/design-content-and-agent-flow.md`.)
 - **Pointer-based storage:** the DB does not store page text — only embeddings, tsvector, and pointers (`url`, `anchor`, page title, heading path, content hash). The source of truth for the index is the on-disk crawl snapshot; content is read from it at query time (hydrate), and citations link to the live URLs.
 - Language: Python 3.11+. All LLM calls go through LiteLLM starting from day one of M3 (before that — direct SDK).
@@ -27,19 +28,19 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
 ## M1 · The Generation Core (Weeks 1–2)
 
 ### 1.1 Output schema
-- [ ] [CORE] `agent/schemas.py`: Pydantic model `CodeAnswer` with fields `code: str`, `explanation: str`, `symbols_used: list[str]`, `torch_version: str`.
+- [ ] [CORE] `agent/schemas.py`: Pydantic model `Answer` with fields `answer_md: str` (markdown, may embed code snippets), `symbols_used: list[str]`, `torch_version: str` (citations and referrals join the schema in M2).
   ✔ Done when: a round-trip test (dict → model → dict) passes.
 
 ### 1.2 LLM wrapper
-- [ ] [CORE] `agent/llm.py`: function `generate_code(question: str) -> CodeAnswer` with structured output, retry (up to 3, exponential backoff), and timeout.
-  ✔ Done when: 10 different questions return a valid `CodeAnswer` without exceptions.
+- [ ] [CORE] `agent/llm.py`: function `answer_question(question: str) -> Answer` with structured output, retry (up to 3, exponential backoff), and timeout.
+  ✔ Done when: 10 different questions return a valid `Answer` without exceptions.
 - [ ] [CORE] Parsing-failure handling: if the output doesn't fit the schema — one repair attempt with the error message, otherwise return a clean error.
   ✔ Done when: a test with a mock that returns broken JSON passes.
 
 ### 1.3 First eval — from day one
-- [ ] [CORE] `eval/checks.py`: three checks on every `CodeAnswer`: (a) `ast.parse` succeeds; (b) every `import` is torch/standard library; (c) every symbol in `symbols_used` actually appears in the code.
+- [ ] [CORE] `eval/checks.py`: three static checks on every `Answer`: (a) every code block in `answer_md` passes `ast.parse`; (b) every `import` in those blocks is torch/standard library; (c) every symbol in `symbols_used` actually appears in the answer.
   ✔ Done when: the checks run on 10 answers and print a pass/fail table.
-- [ ] [CORE] `eval/questions_v0.jsonl`: 15 manual PyTorch questions (5 easy: "what does nn.Dropout do"; 5 medium: "write a DataLoader with a custom sampler"; 5 hard: "custom autograd Function").
+- [ ] [CORE] `eval/questions_v0.jsonl`: 15 manual questions covering the four question types (usage: "how do I use SGD?"; catalog: "what LR schedulers exist?"; recipe: "how do I build a sequence network to detect cats?", "how do I generate music?"; edge: "how do I run a fraud-detection model in the browser?").
   ✔ Done when: the file exists and `eval/run_v0.py` runs all of them and saves results.
 - [ ] [CORE] **Document hallucinations**: run the 15 questions, manually review the code, and record in `eval/hallucinations.md` every invented API or wrong signature, as an OKF unit (YAML frontmatter with `question_id`, `torch_version`, `severity` + a markdown body per finding).
   ✔ Done when: at least 3 examples are documented. *(This is the measurable justification for M2 — don't skip it.)*
@@ -72,7 +73,7 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
 - [ ] [STRETCH] reranker (small cross-encoder or LLM-rerank) over the top-20.
 
 ### 2.4 Wiring and evaluation
-- [ ] [CORE] Update `generate_code`: retrieve → hydrate → inject the sections into the prompt with an explicit instruction "answer only from the provided context; if it's not there, say so and refer via the `[source]`/search link", and add `citations: list[{url, anchor, page_title}]` to the schema.
+- [ ] [CORE] Update `answer_question`: retrieve → hydrate → inject the sections into the prompt with an explicit instruction "answer only from the provided context; if it's not there, say so and refer via the `[source]`/search link", and add `citations: list[{url, anchor, page_title}]` + `referrals: list[{url, reason}]` to the schema.
   ✔ Done when: answers include real citations that open in a browser on the exact section.
   *Note: from this point the crawl snapshot is a runtime dependency — it goes into the deploy image (or a mounted volume) in M5.*
 - [ ] [CORE] Dedicated metric `grounded_api_rate`: percentage of symbols in `symbols_used` that exist in the index. Run on the 15 M1 questions, compare before/after RAG.
@@ -85,16 +86,17 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
 
 ## M3 · The Agent (Weeks 5–6)
 
-### 3.1 Code execution sandbox
-- [ ] [CORE] `agent/runner.py`: run code in an isolated subprocess — Docker image with torch 2.7 **CPU-only** (saves GBs and a GPU machine), 30-second timeout, memory limit, no network.
-  ✔ Done when: valid code returns stdout; an infinite loop is killed by the timeout; `import requests` fails.
-  *Note: start locally with Docker. Moving to Modal — only in M5.*
+### 3.1 Question classification and decomposition
+- [ ] [CORE] `agent/plan.py`: one LLM call that classifies the question type (usage / catalog / recipe / edge) and emits retrieval queries — one for usage/catalog, several (one per step) for recipe questions.
+  ✔ Done when: "how do I build a sequence network to detect cats?" decomposes into ≥3 sensible queries (data loading, model, training), and "how do I use SGD?" stays a single query.
 
 ### 3.2 The manual loop
-- [ ] [CORE] `agent/loop.py`: manual agent loop (~150 lines target): plan → retrieve → generate → run → on error: inject the traceback back and fix (up to 3 rounds) → answer with citations.
-  ✔ Done when: "build a training loop with mixed precision" goes through the full path and returns code that runs.
-- [ ] [CORE] Self-grading on retrieval: after retrieve, a short LLM call judges whether the context is sufficient; if not — rewrite the query and retry once.
-  ✔ Done when: there is a test with an ambiguous question that demonstrates query rewriting.
+- [ ] [CORE] `agent/loop.py`: manual agent loop (~120 lines target): plan → retrieve (per query) → grade → generate → static checks → answer with citations + referrals.
+  ✔ Done when: "how do I generate music?" goes through the full path and returns a multi-step answer citing several tutorial/doc pages.
+- [ ] [CORE] Self-grading on retrieval: after retrieve, a short LLM call judges coverage — fully / partially / not at all. Partial → answer flags the gaps and adds referrals; none → one query rewrite, then an honest gap answer.
+  ✔ Done when: an edge question ("run a model in the browser") produces a partial answer with referrals, not a bluff; an ambiguous question demonstrates query rewriting.
+- [ ] [CORE] Static-check regeneration: if `eval/checks.py` fails (unparseable snippet, symbol not in index), regenerate once with the specific failures injected; a second failure delivers the answer with a visible warning.
+  ✔ Done when: a mocked hallucinated symbol triggers exactly one regeneration round.
 
 ### 3.3 LiteLLM gateway
 - [ ] [CORE] Route all calls through the LiteLLM proxy with config: primary provider + fallback, daily budget, and tag every call (`m3-loop`, `m3-grade`...).
@@ -104,21 +106,21 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
 - [ ] [CORE] Rewrite the loop as a LangGraph graph (the exact same nodes).
   ✔ Done when: both versions pass the same 15-question set with similar results.
 - [ ] [CORE] `docs/loop-vs-langgraph.md`: short comparison — lines of code, ease of debugging, latency. One page, as an OKF unit (YAML frontmatter with `compared` and `date`).
-- [ ] [STRETCH] Expose retrieve + runner as MCP servers with FastMCP; test from an MCP client.
-- [ ] [STRETCH] Routing between an "explain" path (no runner) and a "build" path (with runner).
+- [ ] [STRETCH] Expose retrieve as an MCP server with FastMCP; test from an MCP client.
+- [ ] [STRETCH] Parallel retrieval for recipe questions (run the decomposed queries concurrently in the LangGraph version).
 - [ ] [STRETCH] Long-term memory (user preferences, torch version) — defer if no time.
 
-**Gate to M4:** a real build request goes through plan→retrieve→generate→run→fix→cite end to end.
+**Gate to M4:** a real recipe question goes through plan→retrieve→grade→generate→check→cite end to end.
 
 ---
 
 ## M4 · Discipline (Week 7)
 
-- [ ] [CORE] Wire up Langfuse: a trace for every run with a span per step (plan / retrieve / generate / run / fix).
+- [ ] [CORE] Wire up Langfuse: a trace for every run with a span per step (plan / retrieve / grade / generate / check).
   ✔ Done when: a failed run can be opened in the UI and you can see at which step it broke.
-- [ ] [CORE] Expand the eval set to **40 questions** in `eval/questions_v1.jsonl`, each with: question, type (explain/build), and a gold answer or automatic assertion (e.g. "the code must run a forward pass on a 2x3 tensor without an exception").
-  ✔ Done when: `eval/run_v1.py` runs all of them and prints: pass rate, grounded_api_rate, executability rate, average cost and latency.
-- [ ] [CORE] Error taxonomy: classify every failure into one of 4 categories (fake API / missed retrieval / runtime error / wrong citation), log it in MLflow, and write `docs/error-analysis.md` (OKF unit: frontmatter with `category`, `count`, `eval_version`) with 3 conclusions and one improvement actually implemented.
+- [ ] [CORE] Expand the eval set to **40 questions** in `eval/questions_v1.jsonl`, each with: question, type (usage/catalog/recipe/edge), and an automatic assertion (e.g. "the answer must mention ≥5 scheduler classes", "must cite the DataLoader page", "must include a referral, not a fabricated answer").
+  ✔ Done when: `eval/run_v1.py` runs all of them and prints: pass rate, grounded_api_rate, citation-validity rate, average cost and latency.
+- [ ] [CORE] Error taxonomy: classify every failure into one of 4 categories (fake API / missed retrieval / bluffed instead of referring out / wrong citation), log it in MLflow, and write `docs/error-analysis.md` (OKF unit: frontmatter with `category`, `count`, `eval_version`) with 3 conclusions and one improvement actually implemented.
   ✔ Done when: there is a measurable before/after for at least one improvement.
 - [ ] [CORE] Cache in Upstash Redis: exact-match on (question, index version) for answers, and a cache for query embeddings.
   ✔ Done when: a repeated question returns from cache in <200ms, and hit-rate is measured.
@@ -130,12 +132,12 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
 
 ## M5 · Shipping + Hardening (Week 8)
 
-- [ ] [CORE] Minimal Gradio interface: question field, answer with highlighted code, clickable citations, and a "code runs ✓" indicator.
-- [ ] [CORE] Deploy on a free tier — pick one: HF Spaces (fastest), Modal (more impressive, includes the sandbox), or Railway.
+- [ ] [CORE] Minimal Gradio interface: question field, markdown answer with highlighted snippets, clickable citations (page › section), and visually distinct referral links.
+- [ ] [CORE] Deploy on a free tier — pick one: HF Spaces (fastest), Modal, or Railway.
   ✔ Done when: a public link works from a clean browser, including a full query.
 - [ ] [CORE] Scheduled recrawl: a weekly job (cron / GitHub Action) that runs discover → crawl → embed incrementally (hash-diff), bumps `index_version` only when content changed, and logs how many pages changed.
   ✔ Done when: two consecutive runs against an unchanged site produce a "0 pages changed" log line and no new rows.
-- [ ] [CORE] Basic auth: an API key per user (table in Neon), rate limit per key, and every code run tagged to a key.
+- [ ] [CORE] Basic auth: an API key per user (table in Neon), rate limit per key, and every request tagged to a key.
   ✔ Done when: a request without a key is rejected; one key cannot exceed its quota.
   *Note: not full OAuth. API keys are enough to demonstrate multi-user support.*
 - [ ] [CORE] Cost ceilings: per-key budget and a global daily cap via LiteLLM; exceeding it returns a clean error.
