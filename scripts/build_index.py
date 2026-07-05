@@ -14,6 +14,7 @@ embed batch commits. Kill it anytime; re-running continues where it stopped.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from datetime import UTC, datetime
@@ -28,6 +29,11 @@ def main() -> int:
     args = parser.parse_args()
 
     load_dotenv()
+    # fail fast: better to stop here than crash after an hour of crawling
+    missing = [k for k in ("GEMINI_API_KEY", "NEON_URL") if not os.environ.get(k)]
+    if missing:
+        print(f"ERROR: missing required env vars: {', '.join(missing)} (see .env.example)")
+        return 1
     from index.embed import build_index
     from ingest.crawl import crawl
     from ingest.discover import SEEDS, discover
