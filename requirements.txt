@@ -1,0 +1,12 @@
+# Hugging Face Spaces installs from this file. Mirror of pyproject runtime deps + gradio.
+pydantic>=2
+python-dotenv>=1
+psycopg[binary]>=3.1
+openai>=1.50
+sentence-transformers>=3
+langgraph>=0.2
+requests>=2.31
+beautifulsoup4>=4.12
+markdownify>=0.13
+PyYAML>=6
+gradio>=4

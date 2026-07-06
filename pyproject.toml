@@ -18,6 +18,7 @@ dependencies = [
     "beautifulsoup4>=4.12",
     "markdownify>=0.13",
     "PyYAML>=6",
+    "gradio>=4",
 ]
 
 [project.optional-dependencies]
