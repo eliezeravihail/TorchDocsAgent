@@ -14,6 +14,10 @@ on:
         description: "model slug for openai-compat (OpenRouter :free slugs rotate)"
         type: string
         default: "poolside/laguna-xs-2.1:free"
+      grounded:
+        description: "answer with retrieval + citations (needs the built index)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -27,19 +31,35 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
+      - name: Restore corpus snapshot (grounded mode hydrates from it)
+        uses: actions/cache/restore@v4
+        with:
+          path: _corpus
+          key: corpus-
+          restore-keys: corpus-
+      - name: Restore embedding model
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-bge-small-en-v1.5
       - run: pip install -e .
       - name: Run eval (resumes from committed results if present)
         env:
+          PYTHONUNBUFFERED: "1"
           TORCHDOCS_PROVIDER: ${{ inputs.provider }}
           GEMINI_API_KEY: ${{ secrets.GOOGLE_API }}
+          NEON_URL: ${{ secrets.NEON }}
           OPENAI_COMPAT_BASE_URL: https://openrouter.ai/api/v1
           OPENAI_COMPAT_API_KEY: ${{ secrets.OPENROUTER }}
           TORCHDOCS_OPENAI_COMPAT_MODEL: ${{ inputs.model }}
-        run: python -m eval.run_v0
+        run: |
+          ARGS=""
+          if [ "${{ inputs.grounded }}" = "true" ]; then ARGS="--grounded"; fi
+          python -m eval.run_v0 $ARGS
       - name: Commit results back to the branch
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -f eval/results/v0.jsonl
+          git add -f eval/results/*.jsonl
           git diff --cached --quiet || git commit -m "eval: v0 results from Actions run [skip ci]"
           git push

@@ -17,7 +17,22 @@ from agent.llm import GenerationError, answer_question
 from eval.checks import format_table, run_checks
 
 QUESTIONS = Path(__file__).parent / "questions_v0.jsonl"
-RESULTS = Path(__file__).parent / "results" / "v0.jsonl"
+GROUNDED = "--grounded" in sys.argv
+RESULTS = Path(__file__).parent / "results" / ("v0-grounded.jsonl" if GROUNDED else "v0.jsonl")
+
+
+def _grounded_api_rate(conn, symbols: list[str]) -> float | None:
+    """Share of symbols_used that exist somewhere in the docs index."""
+    if not symbols:
+        return None
+    hits = 0
+    for symbol in symbols:
+        row = conn.execute(
+            "select 1 from chunks where tsv @@ plainto_tsquery('english', %s) limit 1",
+            (symbol,),
+        ).fetchone()
+        hits += 1 if row else 0
+    return hits / len(symbols)
 
 
 def _load_existing() -> dict[str, dict]:
@@ -38,6 +53,13 @@ def main() -> int:
     RESULTS.parent.mkdir(exist_ok=True)
     existing = _load_existing()
 
+    conn = None
+    if GROUNDED:
+        from agent.grounded import answer_grounded
+        from index.db import connect
+
+        conn = connect()
+
     rows = []
     records = []
     for line in QUESTIONS.open():
@@ -49,7 +71,12 @@ def main() -> int:
             print(f"[{q['id']}] {q['question'][:70]}...", flush=True)
             record = {"id": q["id"], "type": q["type"], "question": q["question"]}
             try:
-                answer = answer_question(q["question"])
+                if GROUNDED:
+                    answer = answer_grounded(q["question"])
+                    record["grounded_api_rate"] = _grounded_api_rate(conn, answer.symbols_used)
+                    record["n_citations"] = len(answer.citations)
+                else:
+                    answer = answer_question(q["question"])
                 record["answer"] = answer.model_dump()
                 record["checks"] = run_checks(answer)
             except GenerationError as exc:
@@ -58,6 +85,8 @@ def main() -> int:
         records.append(record)
         if "checks" in record:
             rows.append((record["id"], record["checks"]))
+    if conn is not None:
+        conn.close()
 
     with RESULTS.open("w") as out:
         for record in records:
@@ -67,6 +96,18 @@ def main() -> int:
         print("\n" + format_table(rows))
         passed = sum(1 for _, r in rows if all(v is None for v in r.values()))
         print(f"\n{passed}/{len(rows)} answers passed all checks → {RESULTS}")
+        if GROUNDED:
+            rates = [
+                r["grounded_api_rate"]
+                for r in records
+                if r.get("grounded_api_rate") is not None
+            ]
+            cites = [r.get("n_citations", 0) for r in records if "answer" in r]
+            if rates:
+                avg = sum(rates) / len(rates)
+                print(f"grounded_api_rate: {avg:.0%} (avg over {len(rates)} answers)")
+            if cites:
+                print(f"avg citations per answer: {sum(cites) / len(cites):.1f}")
     return 0 if rows else 1
 
 

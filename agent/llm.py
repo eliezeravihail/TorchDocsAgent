@@ -41,6 +41,7 @@ class GenerationError(RuntimeError):
 def answer_question(
     question: str,
     *,
+    system: str = SYSTEM,
     provider: str | None = None,
     client=None,
     retries: int = 3,
@@ -54,18 +55,18 @@ def answer_question(
     """
     provider = provider or os.environ.get("TORCHDOCS_PROVIDER", "gemini")
     if provider == "gemini":
-        return _answer_gemini(question, client, retries, timeout)
+        return _answer_gemini(question, system, client, retries, timeout)
     if provider == "anthropic":
-        return _answer_anthropic(question, client, retries, timeout)
+        return _answer_anthropic(question, system, client, retries, timeout)
     if provider == "openai-compat":
-        return _answer_openai_compat(question, client, retries, timeout)
+        return _answer_openai_compat(question, system, client, retries, timeout)
     raise GenerationError(f"unknown provider: {provider}")
 
 
 # --- Gemini (default: free tier) -------------------------------------------
 
 
-def _answer_gemini(question: str, client, retries: int, timeout: float) -> Answer:
+def _answer_gemini(question: str, system: str, client, retries: int, timeout: float) -> Answer:
     from google import genai
     from google.genai import errors, types
 
@@ -76,7 +77,7 @@ def _answer_gemini(question: str, client, retries: int, timeout: float) -> Answe
         client = genai.Client(api_key=key, http_options={"timeout": int(timeout * 1000)})
 
     config = types.GenerateContentConfig(
-        system_instruction=SYSTEM,
+        system_instruction=system,
         response_mime_type="application/json",
         response_schema=Answer,
     )
@@ -123,7 +124,9 @@ def _parse_gemini(response) -> Answer | None:
 # --- OpenAI-compatible hosts (DeepInfra / Nebius / OpenRouter / ...) ---------
 
 
-def _answer_openai_compat(question: str, client, retries: int, timeout: float) -> Answer:
+def _answer_openai_compat(
+    question: str, system: str, client, retries: int, timeout: float
+) -> Answer:
     import openai
 
     if client is None:
@@ -134,7 +137,7 @@ def _answer_openai_compat(question: str, client, retries: int, timeout: float) -
         client = openai.OpenAI(base_url=base_url, api_key=key, timeout=timeout)
 
     schema_prompt = (
-        f"{SYSTEM}\nReply with ONLY a JSON object matching this schema:\n"
+        f"{system}\nReply with ONLY a JSON object matching this schema:\n"
         f"{Answer.model_json_schema()}"
     )
 
@@ -192,7 +195,7 @@ _ANSWER_TOOL = {
 }
 
 
-def _answer_anthropic(question: str, client, retries: int, timeout: float) -> Answer:
+def _answer_anthropic(question: str, system: str, client, retries: int, timeout: float) -> Answer:
     import anthropic
 
     if client is None:
@@ -204,7 +207,7 @@ def _answer_anthropic(question: str, client, retries: int, timeout: float) -> An
         return client.messages.create(
             model=ANTHROPIC_MODEL,
             max_tokens=4096,
-            system=SYSTEM,
+            system=system,
             tools=[_ANSWER_TOOL],
             tool_choice={"type": "tool", "name": "submit_answer"},
             messages=messages,
