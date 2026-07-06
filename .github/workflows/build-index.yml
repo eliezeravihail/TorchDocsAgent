@@ -32,11 +32,15 @@ jobs:
           path: _corpus
           key: corpus-${{ github.run_id }}
           restore-keys: corpus-
+      - name: Cache the local embedding model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-bge-small-en-v1.5
       - run: pip install -e .
       - name: Build index
         env:
           PYTHONUNBUFFERED: "1" # stream progress lines to the log in real time
-          GEMINI_API_KEY: ${{ secrets.GOOGLE_API }}
           NEON_URL: ${{ secrets.NEON }}
         run: |
           ARGS=""

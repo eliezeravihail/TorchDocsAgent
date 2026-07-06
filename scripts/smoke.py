@@ -78,18 +78,10 @@ def check_anthropic_llm() -> str | None:
 
 
 def check_embedding() -> str | None:
-    key = os.environ.get("GEMINI_API_KEY")
-    if not key:
-        return "GEMINI_API_KEY is not set (get one free at aistudio.google.com)"
-    from google import genai
+    from index.embed import embed_texts
 
-    client = genai.Client(api_key=key)
-    result = client.models.embed_content(
-        model="gemini-embedding-001",
-        contents="torch.nn.Linear applies an affine transformation",
-    )
-    vector = result.embeddings[0].values
-    if len(vector) < 256 or all(v == 0 for v in vector):
+    vector = embed_texts(["torch.nn.Linear applies an affine transformation"])[0]
+    if len(vector) != 384 or all(v == 0 for v in vector):
         return f"suspicious embedding: len={len(vector)}"
     return None
 
@@ -99,7 +91,7 @@ def main() -> int:
     checks = [
         ("Neon Postgres (write/read)", check_neon),
         ("Gemini LLM (one message)", check_gemini_llm),
-        ("Gemini embedding (one vector)", check_embedding),
+        ("Local embedding (bge-small, one vector)", check_embedding),
         ("Anthropic LLM (optional until M3)", check_anthropic_llm),
     ]
     failures = 0

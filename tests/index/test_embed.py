@@ -1,6 +1,4 @@
-import math
-
-from index.embed import batches, chunk_key, iter_corpus_units, normalize
+from index.embed import QUERY_PREFIX, batches, chunk_key, iter_corpus_units
 from ingest.crawl import save_page
 
 UNIT = {
@@ -27,10 +25,8 @@ def test_batches_splits_exactly():
     assert got == [[0, 1, 2, 3], [4, 5, 6, 7], [8, 9]]
 
 
-def test_normalize_unit_length_and_zero_safe():
-    vec = normalize([3.0, 4.0])
-    assert math.isclose(math.hypot(*vec), 1.0)
-    assert normalize([0.0, 0.0]) == [0.0, 0.0]
+def test_query_prefix_is_bge_convention():
+    assert QUERY_PREFIX.startswith("Represent this sentence")
 
 
 def test_iter_corpus_units_walks_snapshot(tmp_path):

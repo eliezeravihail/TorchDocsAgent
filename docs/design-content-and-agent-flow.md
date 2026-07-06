@@ -85,7 +85,7 @@ Key properties:
 - **The snapshot is the source of truth for the index.** The DB stores no page text — only vectors, tsvectors, and pointers. At query time content is re-read from the snapshot ("hydrate"): section-level for `search_docs` results, whole-page for `read_page`.
 - **Heading-granular chunks** — a chunk is a coherent doc section, never a token window that cuts an example or a catalog list in half.
 - **Idempotent and incremental** — chunk identity is `(url, anchor)`; pages with an unchanged `content_hash` are skipped entirely (the chat-langchain record-manager lesson).
-- **Lean by design** — embeddings via **Gemini `gemini-embedding-001` on the API free tier** (rate-limit-aware batching with backoff; a full index build may take hours, fine for a batch job; paid batch run ~$1–3 as fallback) + free tsvector in Postgres. The same model embeds queries at answer time. No fine-tuned embedders, no graph stores: the agent loop compensates by reformulating and retrying, which research shows is the higher-leverage investment.
+- **Lean by design** — embeddings via a **local open model (bge-small, 384 dims) on CPU**: no API quota or cost, the whole corpus embeds in minutes in CI, and the same model embeds queries at answer time (free-tier embedding APIs proved quota-capped far below corpus size). Plus free tsvector in Postgres. No fine-tuned embedders, no graph stores: the agent loop compensates by reformulating and retrying, which research shows is the higher-leverage investment.
 
 ### 1.3 How often — a scheduled recrawl, because the site is alive
 

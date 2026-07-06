@@ -30,9 +30,8 @@ def main() -> int:
 
     load_dotenv()
     # fail fast: better to stop here than crash after an hour of crawling
-    missing = [k for k in ("GEMINI_API_KEY", "NEON_URL") if not os.environ.get(k)]
-    if missing:
-        print(f"ERROR: missing required env vars: {', '.join(missing)} (see .env.example)")
+    if not os.environ.get("NEON_URL"):
+        print("ERROR: missing required env var NEON_URL (see .env.example)")
         return 1
     from index.embed import build_index
     from ingest.crawl import crawl
