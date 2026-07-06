@@ -36,6 +36,11 @@ create index if not exists chunks_embedding_idx
 create index if not exists chunks_tsv_idx
     on chunks using gin (tsv);
 create index if not exists chunks_url_idx on chunks (url);
+
+create table if not exists index_meta (
+    key   text primary key,
+    value text not null
+);
 """
 
 
@@ -44,6 +49,19 @@ def connect() -> psycopg.Connection:
     if not url:
         raise RuntimeError("NEON_URL is not set (see .env.example)")
     return psycopg.connect(url)
+
+
+def get_meta(conn: psycopg.Connection, key: str) -> str | None:
+    row = conn.execute("select value from index_meta where key = %s", (key,)).fetchone()
+    return row[0] if row else None
+
+
+def set_meta(conn: psycopg.Connection, key: str, value: str) -> None:
+    conn.execute(
+        "insert into index_meta (key, value) values (%s, %s) "
+        "on conflict (key) do update set value = excluded.value",
+        (key, value),
+    )
 
 
 def ensure_schema(conn: psycopg.Connection) -> None:

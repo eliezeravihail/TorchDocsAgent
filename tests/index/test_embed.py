@@ -29,6 +29,29 @@ def test_query_prefix_is_bge_convention():
     assert QUERY_PREFIX.startswith("Represent this sentence")
 
 
+def test_symbol_from_url():
+    from index.embed import symbol_from_url
+
+    url = "https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.sdpa.html"
+    assert symbol_from_url(url) == "torch.nn.functional.sdpa"
+    tut = "https://docs.pytorch.org/tutorials/beginner/intro.html"
+    assert symbol_from_url(tut) == ""
+
+
+def test_indexed_text_prepends_symbol_and_heading():
+    from index.embed import indexed_text
+
+    unit = {
+        "url": "https://docs.pytorch.org/docs/stable/generated/torch.optim.SGD.html",
+        "heading_path": ["torch.optim.SGD", "Parameters"],
+        "content": "lr (float) — learning rate.",
+    }
+    text = indexed_text(unit)
+    assert text.startswith("torch.optim.SGD")
+    assert "torch.optim.SGD > Parameters" in text
+    assert "lr (float)" in text
+
+
 def test_iter_corpus_units_walks_snapshot(tmp_path):
     save_page("https://docs.pytorch.org/docs/stable/optim.html", "core", HTML, tmp_path)
     units = list(iter_corpus_units(tmp_path))
