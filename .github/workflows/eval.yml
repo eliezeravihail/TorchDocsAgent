@@ -15,9 +15,9 @@ on:
         type: string
         default: "poolside/laguna-xs-2.1:free"
       grounded:
-        description: "answer with retrieval + citations (needs the built index)"
+        description: "answer WITH retrieval + citations (the real M2 test); uncheck for the ungrounded baseline"
         type: boolean
-        default: false
+        default: true
 
 permissions:
   contents: write
