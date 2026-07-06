@@ -37,7 +37,6 @@ def test_loop_decomposes_and_answers(monkeypatch):
         return {"query": query, "sections": [{"url": f"u{calls['search']}", "anchor": "",
                 "heading_path": "H", "content": "text"}], "titles": ["H"]}
 
-    monkeypatch.setattr("agent.loop._raw_completion_missing", None, raising=False)
     monkeypatch.setattr("agent.llm._raw_completion", scripted.plan)
     monkeypatch.setattr("agent.tools.search_docs", fake_search)
 
@@ -52,8 +51,9 @@ def test_loop_decomposes_and_answers(monkeypatch):
 
     result = answer_agentic("how do I build a CNN for images?")
     assert result.answer_md == "done"
-    assert calls["search"] == 2  # decomposed into two distinct searches
-    assert len(captured["sections"]) == 2  # both accumulated
+    # 1 seed search + 2 planner-driven searches, all distinct results accumulated
+    assert calls["search"] == 3
+    assert len(captured["sections"]) == 3
 
 
 def test_loop_source_question_adds_referrals(monkeypatch):
@@ -62,6 +62,11 @@ def test_loop_source_question_adds_referrals(monkeypatch):
         None,
     )
     monkeypatch.setattr("agent.llm._raw_completion", scripted.plan)
+    # seed search runs first — stub it so the test stays offline
+    monkeypatch.setattr(
+        "agent.tools.search_docs",
+        lambda q, library=None, k=8: {"query": q, "sections": [], "titles": []},
+    )
 
     captured = {}
 
