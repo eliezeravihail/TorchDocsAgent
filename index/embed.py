@@ -28,10 +28,42 @@ QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
 BATCH_SIZE = 128
 MAX_EMBED_CHARS = 2000  # bge-small context is 512 tokens; beyond it is truncated anyway
 
+# bump when indexed_text() changes → forces a one-time full re-embed (dims same,
+# so the row-skip check would otherwise keep stale vectors)
+EMBED_RECIPE = "v2-heading-url-enriched"
+
 
 def chunk_key(unit: dict) -> str:
     raw = f"{unit['url']}#{unit['anchor']}#{' > '.join(unit['heading_path'])}"
     return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def symbol_from_url(url: str) -> str:
+    """The qualified symbol an API page documents, from its filename.
+
+    generated/torch.nn.functional.scaled_dot_product_attention.html
+      → torch.nn.functional.scaled_dot_product_attention
+    """
+    stem = url.rsplit("/", 1)[-1].removesuffix(".html")
+    root = stem.split(".")[0]
+    return stem if ("." in stem and root in {"torch", "torchvision", "torchaudio"}) else ""
+
+
+def indexed_text(unit: dict) -> str:
+    """What we embed AND tsvector: symbol + heading path prepended to the body.
+
+    Gives the URL/title strong semantic + lexical weight, so a short API page
+    represents its symbol well instead of losing to verbose tutorials.
+    """
+    parts = []
+    symbol = symbol_from_url(unit["url"])
+    if symbol:
+        parts.append(symbol)
+    heading = " > ".join(unit.get("heading_path", []))
+    if heading:
+        parts.append(heading)
+    parts.append(unit["content"])
+    return "\n".join(parts)
 
 
 def iter_corpus_units(corpus_dir: Path = CORPUS_DIR) -> Iterator[dict]:
@@ -95,13 +127,18 @@ def build_index(index_version: str, corpus_dir: Path = CORPUS_DIR, embed_fn=None
     units = list(iter_corpus_units(corpus_dir))
     with connect() as conn:
         ensure_schema(conn)
+        from index.db import get_meta, set_meta
+
         known = existing_hashes(conn)
+        if get_meta(conn, "embed_recipe") != EMBED_RECIPE:
+            print(f"[embed] embed recipe changed → full re-embed ({EMBED_RECIPE})")
+            known = {}  # ignore existing rows so every chunk is re-embedded once
         todo = [u for u in units if known.get(chunk_key(u)) != u["content_hash"]]
         print(f"[embed] {len(units)} chunks in snapshot, {len(todo)} new/changed to embed")
 
         done = 0
         for batch in batches(todo):
-            vectors = embed_fn([u["content"] for u in batch])
+            vectors = embed_fn([indexed_text(u) for u in batch])
             with conn.cursor() as cur:
                 for unit, vector in zip(batch, vectors, strict=True):
                     cur.execute(
@@ -118,7 +155,7 @@ def build_index(index_version: str, corpus_dir: Path = CORPUS_DIR, embed_fn=None
                             unit["content_hash"],
                             index_version,
                             str(vector),
-                            unit["content"],
+                            indexed_text(unit),
                         ),
                     )
             conn.commit()  # checkpoint: safe to kill and re-run from here
@@ -134,6 +171,11 @@ def build_index(index_version: str, corpus_dir: Path = CORPUS_DIR, embed_fn=None
         conn.commit()
         if stale:
             print(f"[embed] purged {len(stale)} stale chunks")
+
+        # stamp the recipe only after a full pass, so a mid-run death re-forces
+        # the full re-embed next time instead of leaving mixed vector recipes
+        set_meta(conn, "embed_recipe", EMBED_RECIPE)
+        conn.commit()
 
         total = conn.execute("select count(*) from chunks").fetchone()[0]
     return {"snapshot_chunks": len(units), "embedded": len(todo), "db_total": total}
