@@ -13,6 +13,7 @@ dependencies = [
     "google-genai>=1",
     "openai>=1.50",
     "sentence-transformers>=3",
+    "langgraph>=0.2",
     "requests>=2.31",
     "beautifulsoup4>=4.12",
     "markdownify>=0.13",

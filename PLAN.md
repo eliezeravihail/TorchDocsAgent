@@ -90,15 +90,15 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
 ## M3 · The Agent (Weeks 5–6)
 
 ### 3.1 The three tools
-- [ ] [CORE] `agent/tools.py`: `search_docs(query, library=None)` (wraps retrieve+hydrate, returns pointers + section text), `read_page(url)` (whole-page hydrate with outline-first guardrail), `ask_source(question)` (DeepWiki MCP client on `pytorch/pytorch` + domain repos; on failure returns referral links only). Each tool result is a typed dict the LLM sees verbatim.
+- [x] [CORE] `agent/tools.py`: `search_docs(query, library=None)` (wraps retrieve+hydrate, returns pointers + section text), `read_page(url)` (whole-page hydrate with outline-first guardrail), `ask_source(question)` (DeepWiki MCP client on `pytorch/pytorch` + domain repos; on failure returns referral links only). Each tool result is a typed dict the LLM sees verbatim.
   ✔ Done when: each tool has a unit test, and `ask_source` with the network mocked-down still returns usable referral links.
 
 ### 3.2 The manual tool loop
-- [ ] [CORE] `agent/loop.py`: manual tool-calling loop (~100 lines target): the LLM iterates over the three tools within budgets (`search_docs` ≤6, `read_page` ≤2, `ask_source` ≤1) until it declares coverage → generate structured `Answer` → static checks → citations + referrals.
+- [x] [CORE] `agent/loop.py`: manual tool-calling loop (~100 lines target): the LLM iterates over the three tools within budgets (`search_docs` ≤6, `read_page` ≤2, `ask_source` ≤1) until it declares coverage → generate structured `Answer` → static checks → citations + referrals.
   ✔ Done when: "how do I generate music?" produces ≥2 distinct `search_docs` queries and an answer citing several pages; "how do I use SGD?" resolves in a single search; budget exhaustion yields an honest gap answer, not a bluff.
-- [ ] [CORE] Static-check regeneration: if `eval/checks.py` fails (unparseable snippet, symbol not in index, `ask_source` claim without a referral), regenerate once with the specific failures injected; a second failure delivers the answer with a visible warning.
+- [x] [CORE] Static-check regeneration: if `eval/checks.py` fails (unparseable snippet, symbol not in index, `ask_source` claim without a referral), regenerate once with the specific failures injected; a second failure delivers the answer with a visible warning.
   ✔ Done when: a mocked hallucinated symbol triggers exactly one regeneration round.
-- [ ] [CORE] Source-question path: "how is conv2d implemented?" flows docs-first, then `ask_source`, and the answer separates docs-cited content from DeepWiki-derived content with a referral link.
+- [x] [CORE] Source-question path: "how is conv2d implemented?" flows docs-first, then `ask_source`, and the answer separates docs-cited content from DeepWiki-derived content with a referral link.
   ✔ Done when: the answer renders the distinction and the referral URL resolves.
 
 ### 3.3 LiteLLM gateway
@@ -106,9 +106,9 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
   ✔ Done when: a per-request cost report appears in the LiteLLM logs.
 
 ### 3.4 LangGraph and comparison
-- [ ] [CORE] Rewrite the loop as a LangGraph graph (the exact same nodes).
+- [x] [CORE] Rewrite the loop as a LangGraph graph (the exact same nodes).
   ✔ Done when: both versions pass the same 15-question set with similar results.
-- [ ] [CORE] `docs/loop-vs-langgraph.md`: short comparison — lines of code, ease of debugging, latency. One page, as an OKF unit (YAML frontmatter with `compared` and `date`).
+- [x] [CORE] `docs/loop-vs-langgraph.md`: short comparison — lines of code, ease of debugging, latency. One page, as an OKF unit (YAML frontmatter with `compared` and `date`).
 - [ ] [STRETCH] Expose `search_docs` as an MCP server with FastMCP; test from an MCP client.
 - [ ] [STRETCH] Parallel tool fan-out (several `search_docs` calls concurrently in the LangGraph version).
 - [ ] [STRETCH] Long-term memory (user preferences, torch version) — defer if no time.
