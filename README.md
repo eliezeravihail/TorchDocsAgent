@@ -1,6 +1,19 @@
+---
+title: TorchDocs Agent
+emoji: 🔥
+colorFrom: red
+colorTo: gray
+sdk: gradio
+app_file: app.py
+pinned: false
+short_description: Ask PyTorch anything, grounded in the docs with citations
+---
+
 # TorchDocsAgent
 
 AI-powered chat agent for PyTorch — ask questions about the library, get code examples, and explore documentation through natural language. This is a personal project and is not official PyTorch team.
+
+> The YAML header above configures the Hugging Face Space (SDK + entrypoint); GitHub just renders it as a table. See [docs/deploy-hf-spaces.md](docs/deploy-hf-spaces.md).
 
 ## Goals
 
