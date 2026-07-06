@@ -51,6 +51,18 @@ class GenerationError(RuntimeError):
     """The model could not produce a schema-valid answer."""
 
 
+def _configured_providers() -> list[str]:
+    """Providers whose API key is present, in preference order."""
+    avail = []
+    if os.environ.get("OPENAI_COMPAT_API_KEY"):
+        avail.append("openai-compat")
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        avail.append("anthropic")
+    if os.environ.get("GEMINI_API_KEY"):
+        avail.append("gemini")
+    return avail
+
+
 def default_provider() -> str:
     """Resolve the provider: explicit env, else whichever key is configured.
 
@@ -61,11 +73,36 @@ def default_provider() -> str:
     explicit = os.environ.get("TORCHDOCS_PROVIDER")
     if explicit:
         return explicit
-    if os.environ.get("OPENAI_COMPAT_API_KEY"):
-        return "openai-compat"
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        return "anthropic"
-    return "gemini"
+    configured = _configured_providers()
+    return configured[0] if configured else "gemini"
+
+
+def _provider_chain(preferred: str) -> list[str]:
+    """Preferred provider first, then every other provider whose key is set.
+
+    This is the self-healing order: if the primary host is unreachable or its
+    secret is misconfigured, the answer path falls through to any other
+    provider that has credentials — so one broken secret can't take the whole
+    deploy down. Only used when no explicit client is passed (i.e. real calls,
+    not the fake-client tests).
+    """
+    chain = [preferred]
+    for p in _configured_providers():
+        if p not in chain:
+            chain.append(p)
+    return chain
+
+
+def _dispatch(
+    provider: str, question: str, system: str, client, retries: int, timeout: float
+) -> Answer:
+    if provider == "gemini":
+        return _answer_gemini(question, system, client, retries, timeout)
+    if provider == "anthropic":
+        return _answer_anthropic(question, system, client, retries, timeout)
+    if provider == "openai-compat":
+        return _answer_openai_compat(question, system, client, retries, timeout)
+    raise GenerationError(f"unknown provider: {provider}")
 
 
 def answer_question(
@@ -81,16 +118,23 @@ def answer_question(
 
     Transport errors: up to `retries` attempts with backoff (longer on 429,
     the free-tier rate limit). Schema errors: one repair round with the
-    validation message, then a clean GenerationError.
+    validation message, then a clean GenerationError. If the primary provider
+    is unreachable, fall back to any other provider that has a key set.
     """
     provider = provider or default_provider()
-    if provider == "gemini":
-        return _answer_gemini(question, system, client, retries, timeout)
-    if provider == "anthropic":
-        return _answer_anthropic(question, system, client, retries, timeout)
-    if provider == "openai-compat":
-        return _answer_openai_compat(question, system, client, retries, timeout)
-    raise GenerationError(f"unknown provider: {provider}")
+    if client is not None:  # explicit client → single provider, no fallback
+        return _dispatch(provider, question, system, client, retries, timeout)
+
+    chain = _provider_chain(provider)
+    last_exc: Exception | None = None
+    for i, p in enumerate(chain):
+        try:
+            return _dispatch(p, question, system, None, retries, timeout)
+        except Exception as exc:  # noqa: BLE001 — resilience across providers
+            last_exc = exc
+            nxt = f"; falling back to {chain[i + 1]}" if i + 1 < len(chain) else ""
+            print(f"[llm] provider {p} failed ({type(exc).__name__}: {exc}){nxt}", flush=True)
+    raise GenerationError(f"all providers failed ({', '.join(chain)}): {last_exc}")
 
 
 def _raw_completion(
@@ -105,9 +149,34 @@ def _raw_completion(
 
     Every provider's failure is wrapped in GenerationError so callers such as
     the planner (_plan) can catch one exception type and degrade gracefully.
+    Mirrors answer_question's self-healing: with no explicit client, an
+    unreachable primary provider falls through to any other configured one.
     """
     provider = provider or default_provider()
+    if client is None:
+        chain = _provider_chain(provider)
+        last_exc: Exception | None = None
+        for i, p in enumerate(chain):
+            try:
+                return _raw_dispatch(
+                    prompt, system=system, provider=p, client=None, timeout=timeout
+                )
+            except Exception as exc:  # noqa: BLE001 — resilience across providers
+                last_exc = exc
+                if i + 1 < len(chain):
+                    print(f"[llm] raw provider {p} failed; trying {chain[i + 1]}", flush=True)
+        raise GenerationError(f"raw completion failed across all providers: {last_exc}")
+    return _raw_dispatch(prompt, system=system, provider=provider, client=client, timeout=timeout)
 
+
+def _raw_dispatch(
+    prompt: str,
+    *,
+    system: str,
+    provider: str,
+    client=None,
+    timeout: float = 60.0,
+) -> str:
     if provider == "gemini":
         from google import genai
         from google.genai import types

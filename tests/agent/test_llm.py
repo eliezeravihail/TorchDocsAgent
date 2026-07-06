@@ -64,7 +64,11 @@ def test_gemini_broken_twice_raises_clean_error():
         answer_question("q", provider="gemini", client=client)
 
 
-def test_unknown_provider_raises():
+def test_unknown_provider_raises(monkeypatch):
+    # with no other provider keys set, an unknown provider has nothing to fall
+    # back to → the "unknown provider" reason surfaces
+    for key in ("OPENAI_COMPAT_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY"):
+        monkeypatch.delenv(key, raising=False)
     with pytest.raises(GenerationError, match="unknown provider"):
         answer_question("q", provider="cohere")
 
@@ -137,6 +141,30 @@ def test_raw_completion_uses_first_split_model_not_raw_chain(monkeypatch):
     assert out == "hi"
     assert seen == ["model-a"]  # first model of the split chain
     assert "," not in seen[0]
+
+
+def test_answer_question_falls_back_to_next_provider(monkeypatch):
+    # the self-healing path: the primary provider is unreachable, so the answer
+    # falls through to another provider whose key is set (no user action needed)
+    import agent.llm as llm
+
+    monkeypatch.setenv("OPENAI_COMPAT_API_KEY", "sk-x")
+    monkeypatch.setenv("GEMINI_API_KEY", "g-x")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("TORCHDOCS_PROVIDER", raising=False)
+
+    tried = []
+
+    def fake_dispatch(provider, question, system, client, retries, timeout):
+        tried.append(provider)
+        if provider == "openai-compat":
+            raise GenerationError("Connection error.")
+        return Answer(**GOOD_PAYLOAD)
+
+    monkeypatch.setattr(llm, "_dispatch", fake_dispatch)
+    answer = answer_question("q")  # no explicit client → fallback chain runs
+    assert answer.answer_md == "Use SGD."
+    assert tried == ["openai-compat", "gemini"]  # primary failed, healed to gemini
 
 
 def test_compat_client_rejects_schemeless_base_url(monkeypatch):
