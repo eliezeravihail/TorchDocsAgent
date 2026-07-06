@@ -17,7 +17,7 @@ jobs:
           lfs: true
       - name: Push to the Space
         env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_TOKEN: ${{ secrets.GITHUBPUSH }}
         run: |
           git push --force \
             "https://eliezeravihail:${HF_TOKEN}@huggingface.co/spaces/eliezeravihail/torchdocs-agent" \
