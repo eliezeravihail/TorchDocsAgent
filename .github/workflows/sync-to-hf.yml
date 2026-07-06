@@ -1,0 +1,24 @@
+name: Sync to Hugging Face Space
+
+# Push main to the HF Space on every merge, so deploys need no manual git dance.
+# One-time setup: add an HF token (write) as the GitHub secret HF_TOKEN.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so HF gets a normal push
+          lfs: true
+      - name: Push to the Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          git push --force \
+            "https://eliezeravihail:${HF_TOKEN}@huggingface.co/spaces/eliezeravihail/torchdocs-agent" \
+            HEAD:main
