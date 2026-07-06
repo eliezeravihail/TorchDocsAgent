@@ -12,6 +12,10 @@ on:
         description: "optional library filter (core/tutorials/vision/audio)"
         type: string
         default: ""
+      model:
+        description: "OpenRouter model for query translation (free slugs rotate)"
+        type: string
+        default: "meta-llama/llama-3.3-70b-instruct:free"
 
 jobs:
   search:
@@ -39,6 +43,11 @@ jobs:
         env:
           PYTHONUNBUFFERED: "1"
           NEON_URL: ${{ secrets.NEON }}
+          # non-English query translation via OpenRouter (Gemini free tier too limited)
+          TORCHDOCS_PROVIDER: openai-compat
+          OPENAI_COMPAT_BASE_URL: https://openrouter.ai/api/v1
+          OPENAI_COMPAT_API_KEY: ${{ secrets.OPENROUTER }}
+          TORCHDOCS_OPENAI_COMPAT_MODEL: ${{ inputs.model }}
         run: |
           ARGS=""
           if [ -n "${{ inputs.library }}" ]; then ARGS="--library ${{ inputs.library }}"; fi
