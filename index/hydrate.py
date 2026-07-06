@@ -33,10 +33,12 @@ def _live_page(url: str) -> tuple[dict, str] | None:
 
     try:
         html = fetch(url).decode("utf-8", errors="replace")
-    except Exception:  # noqa: BLE001 — a dead link just means "no content"
+    except Exception as exc:  # noqa: BLE001 — a dead link just means "no content"
+        print(f"[hydrate] live fetch failed for {url}: {exc}", flush=True)
         return None
     title, main = extract_main_html(html)
-    return {"url": url, "title": title, "content": to_markdown(main)}, to_markdown(main)
+    body = to_markdown(main)
+    return {"url": url, "title": title, "content": body}, body
 
 
 def _load(url: str, corpus_dir: Path) -> tuple[dict, str] | None:
