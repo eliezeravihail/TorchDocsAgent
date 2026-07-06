@@ -63,6 +63,70 @@ def answer_question(
     raise GenerationError(f"unknown provider: {provider}")
 
 
+def _raw_completion(
+    prompt: str,
+    *,
+    system: str,
+    provider: str | None = None,
+    client=None,
+    timeout: float = 60.0,
+) -> str:
+    """Plain-text completion (no schema) — for short helper calls like translation."""
+    provider = provider or os.environ.get("TORCHDOCS_PROVIDER", "gemini")
+
+    if provider == "gemini":
+        from google import genai
+        from google.genai import types
+
+        if client is None:
+            key = os.environ.get("GEMINI_API_KEY")
+            if not key:
+                raise GenerationError("GEMINI_API_KEY is not set")
+            client = genai.Client(api_key=key, http_options={"timeout": int(timeout * 1000)})
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(system_instruction=system),
+        )
+        return getattr(response, "text", "") or ""
+
+    if provider == "openai-compat":
+        import openai
+
+        if client is None:
+            base_url = os.environ.get("OPENAI_COMPAT_BASE_URL")
+            key = os.environ.get("OPENAI_COMPAT_API_KEY")
+            if not base_url or not key:
+                raise GenerationError("OPENAI_COMPAT_BASE_URL / OPENAI_COMPAT_API_KEY not set")
+            client = openai.OpenAI(base_url=base_url, api_key=key, timeout=timeout)
+        reply = client.chat.completions.create(
+            model=OPENAI_COMPAT_MODEL,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt},
+            ],
+        )
+        return reply.choices[0].message.content or ""
+
+    if provider == "anthropic":
+        import anthropic
+
+        if client is None:
+            if not os.environ.get("ANTHROPIC_API_KEY"):
+                raise GenerationError("ANTHROPIC_API_KEY is not set")
+            client = anthropic.Anthropic()
+        msg = client.messages.create(
+            model=ANTHROPIC_MODEL,
+            max_tokens=256,
+            system=system,
+            messages=[{"role": "user", "content": prompt}],
+            timeout=timeout,
+        )
+        return "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+
+    raise GenerationError(f"unknown provider: {provider}")
+
+
 # --- Gemini (default: free tier) -------------------------------------------
 
 
