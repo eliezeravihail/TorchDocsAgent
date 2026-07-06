@@ -23,7 +23,10 @@ def main() -> int:
     from index.hydrate import hydrate_section
     from index.retrieve import retrieve
 
-    results = retrieve(args.query, k=args.k, library=args.library)
+    print("NOTE: the retrieval engine is English-only (like the docs); in the")
+    print("real chat the agent translates the user's question into English queries.\n")
+
+    results = retrieve(args.query, k=args.k, library=args.library, debug=True)
     if not results:
         print("no results — is the index built?")
         return 1

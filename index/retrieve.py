@@ -47,6 +47,7 @@ def retrieve(
     conn=None,
     embed_fn=None,
     pool: int = 20,
+    debug: bool = False,
 ) -> list[dict[str, Any]]:
     """Top-k pointers for a query: dense (pgvector) + keyword (tsvector) via RRF.
 
@@ -74,6 +75,12 @@ def retrieve(
     finally:
         if own_conn:
             conn.close()
+
+    if debug:
+        for name, rows in (("dense", dense_rows), ("keyword", keyword_rows)):
+            print(f"[debug] {name}: {len(rows)} candidates")
+            for row in rows[:3]:
+                print(f"[debug]   {row[4]} | {row[1]}")
 
     pointers = _rows_to_pointers(dense_rows) | _rows_to_pointers(keyword_rows)
     scores = rrf_merge(
