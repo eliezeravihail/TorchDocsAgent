@@ -1,27 +1,32 @@
-"""Embed corpus chunks with gemini-embedding-001 and upsert into Neon.
+"""Embed corpus chunks locally (bge-small on CPU) and upsert into Neon.
 
-Overnight-safe by construction:
+Local by decision: Gemini's free embedding quota (~100 items/day) would take
+weeks for a 7K-chunk corpus. A small open model has no quota, no key, and no
+cost — the whole corpus embeds in minutes on a CI runner's CPU, and the same
+model embeds queries at answer time.
+
+Overnight/CI-safe by construction:
 - resumable: a chunk whose (chunk_key, content_hash) is already in the DB is
   skipped, and every batch commits — kill it anytime, re-run continues;
-- rate-limit aware: 429s wait out the free-tier window with long backoff;
 - content is embedded and indexed (tsvector) but never stored.
 """
 
 from __future__ import annotations
 
 import hashlib
-import math
 import os
-import time
 from collections.abc import Iterator
+from functools import cache
 from pathlib import Path
 
 from ingest.chunk_docs import chunk_page
 from ingest.crawl import CORPUS_DIR, load_page
 
-EMBED_MODEL = os.environ.get("TORCHDOCS_EMBED_MODEL", "gemini-embedding-001")
-BATCH_SIZE = 64
-MAX_EMBED_CHARS = 8000  # ~2k tokens, the embedding model's input ceiling
+EMBED_MODEL = os.environ.get("TORCHDOCS_EMBED_MODEL", "BAAI/bge-small-en-v1.5")
+# bge convention: queries get an instruction prefix, documents do not
+QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
+BATCH_SIZE = 128
+MAX_EMBED_CHARS = 2000  # bge-small context is 512 tokens; beyond it is truncated anyway
 
 
 def chunk_key(unit: dict) -> str:
@@ -41,32 +46,27 @@ def batches(items: list, size: int = BATCH_SIZE) -> Iterator[list]:
         yield items[i : i + size]
 
 
-def normalize(vector: list[float]) -> list[float]:
-    """Unit-normalize (required when truncating gemini embeddings' dims)."""
-    norm = math.sqrt(sum(v * v for v in vector)) or 1.0
-    return [v / norm for v in vector]
+@cache
+def _model():
+    from sentence_transformers import SentenceTransformer
+
+    print(f"[embed] loading {EMBED_MODEL} (first run downloads ~130MB)")
+    return SentenceTransformer(EMBED_MODEL, device="cpu")
 
 
-def embed_texts(client, texts: list[str], retries: int = 8) -> list[list[float]]:
-    """One batched embedding call with free-tier-window backoff."""
-    from google.genai import errors, types
+def embed_texts(texts: list[str]) -> list[list[float]]:
+    """Embed document chunks locally; unit-normalized vectors."""
+    vectors = _model().encode(
+        [t[:MAX_EMBED_CHARS] for t in texts],
+        normalize_embeddings=True,
+        show_progress_bar=False,
+    )
+    return [v.tolist() for v in vectors]
 
-    config = types.EmbedContentConfig(output_dimensionality=768, task_type="RETRIEVAL_DOCUMENT")
-    last_exc: Exception | None = None
-    for attempt in range(retries):
-        try:
-            result = client.models.embed_content(
-                model=EMBED_MODEL,
-                contents=[t[:MAX_EMBED_CHARS] for t in texts],
-                config=config,
-            )
-            return [normalize(e.values) for e in result.embeddings]
-        except errors.APIError as exc:
-            last_exc = exc
-            wait = 30 * (attempt + 1) if exc.code == 429 else 2**attempt
-            print(f"[embed] API error {exc.code}, waiting {wait}s (attempt {attempt + 1})")
-            time.sleep(wait)
-    raise RuntimeError(f"embedding failed after {retries} attempts: {last_exc}")
+
+def embed_query(text: str) -> list[float]:
+    """Embed a search query (bge instruction prefix) for retrieve()."""
+    return embed_texts([QUERY_PREFIX + text])[0]
 
 
 def existing_hashes(conn) -> dict[str, str]:
@@ -87,18 +87,11 @@ on conflict (chunk_key) do update set
 """
 
 
-def build_index(index_version: str, corpus_dir: Path = CORPUS_DIR, client=None) -> dict:
+def build_index(index_version: str, corpus_dir: Path = CORPUS_DIR, embed_fn=None) -> dict:
     """Embed every new/changed chunk in the snapshot into Neon."""
-    from google import genai
-
     from index.db import connect, ensure_schema
 
-    if client is None:
-        key = os.environ.get("GEMINI_API_KEY")
-        if not key:
-            raise RuntimeError("GEMINI_API_KEY is not set")
-        client = genai.Client(api_key=key)
-
+    embed_fn = embed_fn or embed_texts
     units = list(iter_corpus_units(corpus_dir))
     with connect() as conn:
         ensure_schema(conn)
@@ -108,7 +101,7 @@ def build_index(index_version: str, corpus_dir: Path = CORPUS_DIR, client=None) 
 
         done = 0
         for batch in batches(todo):
-            vectors = embed_texts(client, [u["content"] for u in batch])
+            vectors = embed_fn([u["content"] for u in batch])
             with conn.cursor() as cur:
                 for unit, vector in zip(batch, vectors, strict=True):
                     cur.execute(

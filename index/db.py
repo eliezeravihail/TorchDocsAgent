@@ -10,7 +10,7 @@ import os
 
 import psycopg
 
-EMBED_DIMS = 768  # gemini-embedding-001 truncated output; vectors re-normalized in code
+EMBED_DIMS = 384  # BAAI/bge-small-en-v1.5 — local CPU model, no API quota
 
 SCHEMA = f"""
 create extension if not exists vector;
@@ -48,4 +48,14 @@ def connect() -> psycopg.Connection:
 
 def ensure_schema(conn: psycopg.Connection) -> None:
     conn.execute(SCHEMA)
+    # the index is a rebuildable cache: if the embedding dimension changed
+    # (model swap), drop and recreate rather than mixing vector spaces
+    row = conn.execute(
+        "select atttypmod from pg_attribute "
+        "where attrelid = 'chunks'::regclass and attname = 'embedding'"
+    ).fetchone()
+    if row and row[0] != EMBED_DIMS:
+        print(f"[db] embedding dims changed ({row[0]} -> {EMBED_DIMS}); rebuilding chunks table")
+        conn.execute("drop table chunks")
+        conn.execute(SCHEMA)
     conn.commit()
