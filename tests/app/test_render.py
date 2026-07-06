@@ -1,0 +1,36 @@
+from agent.schemas import Answer, Citation, Referral
+from app.main import render, respond
+
+
+def test_render_includes_answer_citations_referrals():
+    answer = Answer(
+        answer_md="Use `torch.optim.SGD`.",
+        torch_version="2.12",
+        citations=[
+            Citation(
+                url="https://docs.pytorch.org/docs/stable/generated/torch.optim.SGD.html",
+                anchor="torch.optim.SGD",
+                title="torch.optim.SGD",
+            )
+        ],
+        referrals=[Referral(url="https://deepwiki.com/pytorch/pytorch", reason="source")],
+    )
+    md = render(answer)
+    assert "Use `torch.optim.SGD`." in md
+    assert "**Sources**" in md
+    assert "torch.optim.SGD.html#torch.optim.SGD" in md
+    assert "**Beyond these docs**" in md
+    assert "PyTorch 2.12" in md
+
+
+def test_respond_empty_question():
+    assert "Ask me something" in respond("   ")
+
+
+def test_respond_never_crashes(monkeypatch):
+    def boom(q, **k):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr("app.main.answer_agentic", boom)
+    out = respond("how do I use SGD?")
+    assert "went wrong" in out and "db down" in out

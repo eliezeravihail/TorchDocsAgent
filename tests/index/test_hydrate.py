@@ -20,7 +20,8 @@ def test_hydrate_section_returns_matching_content(tmp_path):
     assert "Stochastic gradient descent" in result["content"]
 
 
-def test_hydrate_section_missing_page_returns_none(tmp_path):
+def test_hydrate_section_missing_page_returns_none(tmp_path, monkeypatch):
+    monkeypatch.setattr("index.hydrate._LIVE", False)  # no live fallback in this test
     assert hydrate_section({"url": URL, "heading_path": "x"}, tmp_path) is None
 
 
