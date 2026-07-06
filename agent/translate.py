@@ -31,14 +31,14 @@ def translate_to_english(query: str, *, provider: str | None = None, client=None
     if looks_english(query):
         return query
 
-    from agent.llm import GenerationError, _raw_completion
+    from agent.llm import _raw_completion
 
     try:
         english = _raw_completion(
             query, system=_TRANSLATE_SYSTEM, provider=provider, client=client
         ).strip()
-    except GenerationError as exc:
-        print(f"[translate] failed ({exc}); using original query")
+    except Exception as exc:  # noqa: BLE001 — translation is best-effort, never fatal
+        print(f"[translate] failed ({exc}); falling back to the original query")
         return query
     # a translation should be short; if the model rambled, keep the first line
     return english.splitlines()[0].strip() if english else query
