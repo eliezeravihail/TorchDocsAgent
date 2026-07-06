@@ -227,6 +227,7 @@ def _answer_openai_compat(
         key = os.environ.get("OPENAI_COMPAT_API_KEY")
         if not key:
             raise GenerationError("OPENAI_COMPAT_API_KEY not set")
+        print(f"[llm] openai-compat base_url={base_url} models={_compat_models()}", flush=True)
         client = openai.OpenAI(base_url=base_url, api_key=key, timeout=timeout)
 
     schema_prompt = (
@@ -249,6 +250,7 @@ def _answer_openai_compat(
                     )
                 except openai.APIError as exc:
                     last_exc = exc
+                    print(f"[llm] {model} error: {type(exc).__name__}: {exc}", flush=True)
                     status = getattr(exc, "status_code", None)
                     if status == 404:  # slug retired → skip to the next model
                         print(f"[llm] {model} unavailable (404); trying next model")
