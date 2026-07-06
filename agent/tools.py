@@ -26,6 +26,11 @@ def search_docs(query: str, library: str | None = None, k: int = 8) -> dict:
     english = translate_to_english(query)
     pointers = retrieve(english, k=k, library=library)
     sections = [s for s in (hydrate_section(p) for p in pointers) if s]
+    print(
+        f"[search_docs] {english!r} → {len(pointers)} pointers, "
+        f"{len(sections)} hydrated",
+        flush=True,
+    )
     return {
         "query": english,
         "sections": sections,
