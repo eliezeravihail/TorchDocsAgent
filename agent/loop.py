@@ -62,7 +62,7 @@ def _parse_action(raw: str) -> dict:
 def answer_agentic(question: str, provider: str | None = None, client=None) -> Answer:
     """Run the tool loop and return a grounded Answer."""
     from agent.grounded import answer_from_sections
-    from agent.tools import ask_source, read_page, search_docs
+    from agent.tools_exec import do_search, execute_tool
 
     budgets = dict(BUDGETS)
     sections: list[dict] = []
@@ -70,18 +70,10 @@ def answer_agentic(question: str, provider: str | None = None, client=None) -> A
     seen_urls: set[str] = set()
     transcript: list[str] = []
 
-    def do_search(query: str, library=None) -> None:
-        result = search_docs(query, library)
-        for s in result["sections"]:
-            if s["url"] + s.get("anchor", "") not in seen_urls:
-                seen_urls.add(s["url"] + s.get("anchor", ""))
-                sections.append(s)
-        transcript.append(f"search_docs({result['query']!r}) → {result['titles'][:5]}")
-
     # always retrieve once for the raw question — never depend on a (possibly
     # rate-limited) planner call just to do the obvious first search
     budgets["search_docs"] -= 1
-    do_search(question)
+    do_search(question, None, sections=sections, seen_urls=seen_urls, transcript=transcript)
 
     for _ in range(MAX_STEPS):
         action = _plan(question, transcript, budgets, provider, client)
@@ -94,22 +86,11 @@ def answer_agentic(question: str, provider: str | None = None, client=None) -> A
             continue
         budgets[name] -= 1
 
-        if name == "search_docs":
-            do_search(action.get("query", question), action.get("library"))
-        elif name == "read_page":
-            page = read_page(action.get("url", ""))
-            if "content" in page:
-                sections.append(
-                    {"url": page["url"], "anchor": "", "heading_path": page.get("title", ""),
-                     "content": page["content"]}
-                )
-                transcript.append(f"read_page({page['url']}) → full page added")
-            else:
-                transcript.append(f"read_page → {page.get('outline') or page.get('error')}")
-        elif name == "ask_source":
-            src = ask_source(action.get("question", question))
-            referrals.extend(src["referrals"])
-            transcript.append(f"ask_source → {len(src['referrals'])} referral links")
+        execute_tool(
+            name, action, question,
+            sections=sections, referrals=referrals,
+            seen_urls=seen_urls, transcript=transcript,
+        )
 
     return answer_from_sections(
         question, sections, referrals=referrals, provider=provider, client=client

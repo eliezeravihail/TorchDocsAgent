@@ -8,7 +8,9 @@ identical.
 
 from __future__ import annotations
 
-from agent.llm import answer_question
+from urllib.parse import quote_plus
+
+from agent.llm import GenerationError, answer_question
 from agent.schemas import Answer, Referral
 
 GROUNDED_SYSTEM = (
@@ -53,6 +55,40 @@ def validate_citations(answer: Answer, sections: list[dict]) -> Answer:
     return answer.model_copy(update={"citations": kept})
 
 
+def _regenerate_if_checks_fail(
+    question: str, user: str, answer: Answer, provider, client
+) -> Answer:
+    """Run the static checks (parses / imports / symbols); one repair round.
+
+    This is the live-path wiring of eval/checks.py the plan (M3.2) called for:
+    if a code block doesn't parse, an import is off-family, or a listed symbol
+    is missing from the prose, re-ask once with the reasons. Keep the repair
+    only if it is actually cleaner; never block the user on a failed check.
+    """
+    from eval.checks import run_checks
+
+    failures = {name: msg for name, msg in run_checks(answer).items() if msg}
+    if not failures:
+        return answer
+    reasons = "; ".join(f"{name}: {msg}" for name, msg in failures.items())
+    print(f"[grounded] static checks failed ({reasons}); regenerating once", flush=True)
+    repair = (
+        f"{user}\n\n---\n\nYour previous answer failed these checks: {reasons}. "
+        "Fix them: every fenced python block must parse, imports must be "
+        "torch-family or stdlib only, and every symbol in symbols_used must "
+        "appear verbatim in the answer. Reply again with a corrected answer."
+    )
+    try:
+        regenerated = answer_question(
+            repair, system=GROUNDED_SYSTEM, provider=provider, client=client
+        )
+    except GenerationError:
+        return answer  # repair round unreachable → keep the first answer
+    if sum(1 for msg in run_checks(regenerated).values() if msg) < len(failures):
+        return regenerated
+    return answer
+
+
 def answer_from_sections(
     question: str,
     sections: list[dict],
@@ -73,11 +109,12 @@ def answer_from_sections(
                 "for this question."
             ),
             referrals=referrals
-            or [Referral(url=SEARCH_URL + question.replace(" ", "+"), reason="docs search")],
+            or [Referral(url=SEARCH_URL + quote_plus(question), reason="docs search")],
         )
 
     user = f"{build_context(sections)}\n\n---\n\nQuestion: {question}"
     answer = answer_question(user, system=GROUNDED_SYSTEM, provider=provider, client=client)
+    answer = _regenerate_if_checks_fail(question, user, answer, provider, client)
     answer = validate_citations(answer, sections)
     if referrals:  # tool-loop referrals (e.g. ask_source) join any the model added
         answer = answer.model_copy(update={"referrals": answer.referrals + referrals})
