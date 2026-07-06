@@ -99,14 +99,21 @@ def _raw_completion(
             if not base_url or not key:
                 raise GenerationError("OPENAI_COMPAT_BASE_URL / OPENAI_COMPAT_API_KEY not set")
             client = openai.OpenAI(base_url=base_url, api_key=key, timeout=timeout)
-        reply = client.chat.completions.create(
-            model=OPENAI_COMPAT_MODEL,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": prompt},
-            ],
-        )
-        return reply.choices[0].message.content or ""
+        for attempt in range(3):
+            try:
+                reply = client.chat.completions.create(
+                    model=OPENAI_COMPAT_MODEL,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": prompt},
+                    ],
+                )
+                return reply.choices[0].message.content or ""
+            except openai.APIError as exc:
+                if getattr(exc, "status_code", None) == 429 and attempt < 2:
+                    time.sleep(15 * (attempt + 1))
+                    continue
+                raise GenerationError(f"openai-compat call failed: {exc}") from exc
 
     if provider == "anthropic":
         import anthropic

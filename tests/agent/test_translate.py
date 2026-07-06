@@ -35,15 +35,12 @@ def test_hebrew_query_is_translated(monkeypatch):
     assert out == "linear learning rate scheduler"
 
 
-def test_translation_failure_falls_back_to_original(monkeypatch):
+def test_translation_failure_falls_back_to_original():
     def boom(**kw):
-        raise RuntimeError("network down")
+        raise RuntimeError("upstream 429")
 
     client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=boom)))
     original = "כיצד לבצע סקדולר"
-    # a raw RuntimeError (not GenerationError) propagates; guard only catches
-    # GenerationError, so this asserts the error type contract explicitly
-    try:
-        translate_to_english(original, provider="openai-compat", client=client)
-    except RuntimeError:
-        pass
+    # any failure (rate limit, network) must degrade to the original query,
+    # never crash the search
+    assert translate_to_english(original, provider="openai-compat", client=client) == original
