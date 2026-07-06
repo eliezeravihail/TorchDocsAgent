@@ -43,6 +43,23 @@ class GenerationError(RuntimeError):
     """The model could not produce a schema-valid answer."""
 
 
+def default_provider() -> str:
+    """Resolve the provider: explicit env, else whichever key is configured.
+
+    Keeps a deploy working when TORCHDOCS_PROVIDER is forgotten — if an
+    OpenRouter/OpenAI-compat key is set, use it rather than falling back to
+    gemini (whose SDK may not even be installed).
+    """
+    explicit = os.environ.get("TORCHDOCS_PROVIDER")
+    if explicit:
+        return explicit
+    if os.environ.get("OPENAI_COMPAT_API_KEY"):
+        return "openai-compat"
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return "anthropic"
+    return "gemini"
+
+
 def answer_question(
     question: str,
     *,
@@ -58,7 +75,7 @@ def answer_question(
     the free-tier rate limit). Schema errors: one repair round with the
     validation message, then a clean GenerationError.
     """
-    provider = provider or os.environ.get("TORCHDOCS_PROVIDER", "gemini")
+    provider = provider or default_provider()
     if provider == "gemini":
         return _answer_gemini(question, system, client, retries, timeout)
     if provider == "anthropic":
@@ -77,7 +94,7 @@ def _raw_completion(
     timeout: float = 60.0,
 ) -> str:
     """Plain-text completion (no schema) — for short helper calls like translation."""
-    provider = provider or os.environ.get("TORCHDOCS_PROVIDER", "gemini")
+    provider = provider or default_provider()
 
     if provider == "gemini":
         from google import genai
@@ -99,10 +116,10 @@ def _raw_completion(
         import openai
 
         if client is None:
-            base_url = os.environ.get("OPENAI_COMPAT_BASE_URL")
+            base_url = os.environ.get("OPENAI_COMPAT_BASE_URL") or "https://openrouter.ai/api/v1"
             key = os.environ.get("OPENAI_COMPAT_API_KEY")
-            if not base_url or not key:
-                raise GenerationError("OPENAI_COMPAT_BASE_URL / OPENAI_COMPAT_API_KEY not set")
+            if not key:
+                raise GenerationError("OPENAI_COMPAT_API_KEY not set")
             client = openai.OpenAI(base_url=base_url, api_key=key, timeout=timeout)
         for attempt in range(3):
             try:
@@ -206,10 +223,10 @@ def _answer_openai_compat(
     import openai
 
     if client is None:
-        base_url = os.environ.get("OPENAI_COMPAT_BASE_URL")
+        base_url = os.environ.get("OPENAI_COMPAT_BASE_URL") or "https://openrouter.ai/api/v1"
         key = os.environ.get("OPENAI_COMPAT_API_KEY")
-        if not base_url or not key:
-            raise GenerationError("OPENAI_COMPAT_BASE_URL / OPENAI_COMPAT_API_KEY not set")
+        if not key:
+            raise GenerationError("OPENAI_COMPAT_API_KEY not set")
         client = openai.OpenAI(base_url=base_url, api_key=key, timeout=timeout)
 
     schema_prompt = (
