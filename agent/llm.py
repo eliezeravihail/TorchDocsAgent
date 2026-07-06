@@ -20,10 +20,15 @@ from agent.schemas import Answer
 
 GEMINI_MODEL = os.environ.get("TORCHDOCS_GEMINI_MODEL", "gemini-2.5-flash")
 ANTHROPIC_MODEL = os.environ.get("TORCHDOCS_ANTHROPIC_MODEL", "claude-sonnet-5")
-# any OpenAI-compatible host (DeepInfra, Nebius, OpenRouter, ...) — see .env.example
+# any OpenAI-compatible host (DeepInfra, Nebius, OpenRouter, ...) — see .env.example.
+# comma-separated → fallback chain: if one model is rate-limited/gone, try the next
 OPENAI_COMPAT_MODEL = os.environ.get(
     "TORCHDOCS_OPENAI_COMPAT_MODEL", "deepseek-ai/DeepSeek-V4-Flash"
 )
+
+
+def _compat_models() -> list[str]:
+    return [m.strip() for m in OPENAI_COMPAT_MODEL.split(",") if m.strip()]
 
 SYSTEM = (
     "You are a PyTorch documentation assistant. Answer the user's question in "
@@ -212,27 +217,33 @@ def _answer_openai_compat(
         f"{Answer.model_json_schema()}"
     )
 
+    models = _compat_models()
     json_mode = True  # dropped for hosts/models that reject response_format
 
     def generate(messages):
         nonlocal json_mode
         last_exc: Exception | None = None
-        for attempt in range(retries):
-            kwargs = {"response_format": {"type": "json_object"}} if json_mode else {}
-            try:
-                return client.chat.completions.create(
-                    model=OPENAI_COMPAT_MODEL, messages=messages, **kwargs
-                )
-            except openai.APIError as exc:
-                last_exc = exc
-                status = getattr(exc, "status_code", None)
-                if status == 404:  # model slug gone (e.g. :free variant retired) — fail fast
-                    raise GenerationError(f"model not available: {exc}") from exc
-                if json_mode and status in (400, 422):
-                    json_mode = False  # host rejected JSON mode — prompt+repair covers it
-                    continue
-                time.sleep(20 * (attempt + 1) if status == 429 else 2**attempt)
-        raise GenerationError(f"LLM call failed after {retries} attempts: {last_exc}")
+        for model in models:  # fallback chain across free models
+            for attempt in range(retries):
+                kwargs = {"response_format": {"type": "json_object"}} if json_mode else {}
+                try:
+                    return client.chat.completions.create(
+                        model=model, messages=messages, **kwargs
+                    )
+                except openai.APIError as exc:
+                    last_exc = exc
+                    status = getattr(exc, "status_code", None)
+                    if status == 404:  # slug retired → skip to the next model
+                        print(f"[llm] {model} unavailable (404); trying next model")
+                        break
+                    if json_mode and status in (400, 422):
+                        json_mode = False  # host rejected JSON mode — prompt+repair covers it
+                        continue
+                    if status == 429 and attempt == retries - 1:
+                        print(f"[llm] {model} rate-limited; trying next model")
+                        break  # exhausted this model → next in the chain
+                    time.sleep(20 * (attempt + 1) if status == 429 else 2**attempt)
+        raise GenerationError(f"LLM call failed across {len(models)} model(s): {last_exc}")
 
     messages = [
         {"role": "system", "content": schema_prompt},
