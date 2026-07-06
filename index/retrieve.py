@@ -47,6 +47,18 @@ def extract_symbol(query: str) -> str | None:
     return max(matches, key=len) if matches else None
 
 
+def is_exact_api(pointer: dict, symbol: str) -> bool:
+    """True if the pointer is the API-reference page for exactly this symbol.
+
+    url .../generated/torch.nn.functional.scaled_dot_product_attention.html
+    matches symbol 'scaled_dot_product_attention' (suffix) or the full path.
+    """
+    if pointer.get("kind") != "api":
+        return False
+    stem = pointer["url"].rsplit("/", 1)[-1].removesuffix(".html")
+    return stem == symbol or stem.endswith("." + symbol)
+
+
 def rrf_merge(rankings: list[list[str]], k: int = 60) -> dict[str, float]:
     """Reciprocal Rank Fusion: score(item) = Σ 1/(k + rank) over all rankings."""
     scores: dict[str, float] = {}
@@ -114,5 +126,13 @@ def retrieve(
     for _, rows in channels:
         pointers |= _rows_to_pointers(rows)
     scores = rrf_merge([[r[0] for r in rows] for _, rows in channels])
-    top = sorted(scores, key=scores.get, reverse=True)[:k]
-    return [pointers[chunk_key] for chunk_key in top]
+    ranked = sorted(scores, key=scores.get, reverse=True)
+
+    # exact API lookup: if the user typed a precise symbol and its reference
+    # page was found, pin it first — the docs-search behavior users expect
+    if symbol:
+        exact = next((ck for ck in ranked if is_exact_api(pointers[ck], symbol)), None)
+        if exact:
+            ranked = [exact] + [ck for ck in ranked if ck != exact]
+
+    return [pointers[chunk_key] for chunk_key in ranked[:k]]

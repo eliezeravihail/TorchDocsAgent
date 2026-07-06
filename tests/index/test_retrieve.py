@@ -69,3 +69,34 @@ def test_non_symbol_query_skips_symbol_channel():
     conn = FakeConn([[_row("d1")], [_row("k1")]])
     retrieve("how to train a model", k=3, conn=conn, embed_fn=lambda q: [0.0] * 384)
     assert len(conn.queries) == 2  # no symbol channel
+
+
+def _api_row(key, symbol):
+    url = f"https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.{symbol}.html"
+    return (key, url, "", "", "", "core", "api", "")
+
+
+def test_exact_api_page_pinned_first():
+    # tutorials dominate RRF (appear in every channel); the API page appears
+    # only in the symbol channel yet must be pinned #1 for an exact symbol query
+    dense = [_row("tut1"), _row("tut2")]
+    keyword = [_row("tut1")]
+    symbol = [_row("tut1"), _api_row("apipage", "scaled_dot_product_attention")]
+    conn = FakeConn([dense, keyword, symbol])
+    results = retrieve(
+        "scaled_dot_product_attention", k=3, conn=conn, embed_fn=lambda q: [0.0] * 384
+    )
+    assert results[0]["chunk_key"] == "apipage"
+
+
+def test_is_exact_api():
+    from index.retrieve import is_exact_api
+
+    ptr = {
+        "kind": "api",
+        "url": "https://docs.pytorch.org/docs/stable/generated/torch.optim.SGD.html",
+    }
+    assert is_exact_api(ptr, "SGD")
+    assert is_exact_api(ptr, "torch.optim.SGD")
+    assert not is_exact_api(ptr, "Adam")
+    assert not is_exact_api({**ptr, "kind": "tutorial"}, "SGD")
