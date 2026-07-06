@@ -7,6 +7,7 @@ engine behind the agent's `search_docs` tool.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 POINTER_COLUMNS = "chunk_key, url, anchor, page_title, heading_path, library, kind, source_link"
@@ -24,6 +25,26 @@ where tsv @@ plainto_tsquery('english', %(query)s) {{extra}}
 order by ts_rank(tsv, plainto_tsquery('english', %(query)s)) desc
 limit %(pool)s
 """
+
+# exact-symbol channel: for API-name queries the reference page is short and
+# loses to verbose tutorials on both dense and keyword — match the symbol in the
+# url/title/heading and prefer api-reference pages, so RRF lifts the real def
+SYMBOL_SQL = f"""
+select {POINTER_COLUMNS} from chunks
+where (url ilike %(sym)s or page_title ilike %(sym)s or heading_path ilike %(sym)s) {{extra}}
+order by (kind = 'api') desc, length(url) asc
+limit %(pool)s
+"""
+
+# a symbol-ish token: dotted/underscored identifier (torch.nn.functional.sdpa,
+# scaled_dot_product_attention). Bare words like "SGD" go through dense+keyword.
+_SYMBOL_TOKEN = re.compile(r"[A-Za-z_][\w.]*[._][\w.]*[A-Za-z0-9_]")
+
+
+def extract_symbol(query: str) -> str | None:
+    """Longest dotted/underscored identifier in the query, if any."""
+    matches = _SYMBOL_TOKEN.findall(query)
+    return max(matches, key=len) if matches else None
 
 
 def rrf_merge(rankings: list[list[str]], k: int = 60) -> dict[str, float]:
@@ -72,19 +93,26 @@ def retrieve(
         params["vector"] = str(embed_fn(query))
         dense_rows = conn.execute(DENSE_SQL.format(where=where), params).fetchall()
         keyword_rows = conn.execute(KEYWORD_SQL.format(extra=extra), params).fetchall()
+
+        symbol_rows: list[tuple] = []
+        symbol = extract_symbol(query)
+        if symbol:
+            params["sym"] = f"%{symbol}%"
+            symbol_rows = conn.execute(SYMBOL_SQL.format(extra=extra), params).fetchall()
     finally:
         if own_conn:
             conn.close()
 
+    channels = [("dense", dense_rows), ("keyword", keyword_rows), ("symbol", symbol_rows)]
     if debug:
-        for name, rows in (("dense", dense_rows), ("keyword", keyword_rows)):
+        for name, rows in channels:
             print(f"[debug] {name}: {len(rows)} candidates")
             for row in rows[:3]:
                 print(f"[debug]   {row[4]} | {row[1]}")
 
-    pointers = _rows_to_pointers(dense_rows) | _rows_to_pointers(keyword_rows)
-    scores = rrf_merge(
-        [[r[0] for r in dense_rows], [r[0] for r in keyword_rows]]
-    )
+    pointers: dict[str, dict[str, Any]] = {}
+    for _, rows in channels:
+        pointers |= _rows_to_pointers(rows)
+    scores = rrf_merge([[r[0] for r in rows] for _, rows in channels])
     top = sorted(scores, key=scores.get, reverse=True)[:k]
     return [pointers[chunk_key] for chunk_key in top]
