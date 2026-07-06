@@ -11,9 +11,9 @@ on:
         options: [openai-compat, gemini]
         default: openai-compat
       model:
-        description: "model slug for openai-compat (OpenRouter :free slugs rotate)"
+        description: "comma-separated OpenRouter :free models (fallback chain if rate-limited)"
         type: string
-        default: "poolside/laguna-xs-2.1:free"
+        default: "poolside/laguna-xs-2.1:free,meta-llama/llama-3.3-70b-instruct:free,deepseek/deepseek-chat-v3.1:free"
       grounded:
         description: "answer WITH retrieval + citations (the real M2 test); uncheck for the ungrounded baseline"
         type: boolean

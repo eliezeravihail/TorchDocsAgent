@@ -93,6 +93,27 @@ def test_openai_compat_valid_answer():
     assert client.requests[0]["response_format"] == {"type": "json_object"}
 
 
+def test_openai_compat_falls_back_to_next_model_on_429(monkeypatch):
+    import openai
+
+    monkeypatch.setenv("TORCHDOCS_OPENAI_COMPAT_MODEL", "model-a,model-b")
+
+    calls = {"n": 0}
+
+    def create(**kwargs):
+        calls["n"] += 1
+        if kwargs["model"] == "model-a":
+            raise openai.RateLimitError(
+                "429", response=SimpleNamespace(status_code=429, headers={}), body=None
+            )
+        message = SimpleNamespace(content=Answer(**GOOD_PAYLOAD).model_dump_json())
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    answer = answer_question("q", provider="openai-compat", client=client, retries=1)
+    assert answer.answer_md == "Use SGD."  # model-b answered after model-a was rate-limited
+
+
 def test_openai_compat_repair_then_error():
     client = FakeOpenAIClient(["junk", "still junk"])
     with pytest.raises(GenerationError, match="after repair"):
