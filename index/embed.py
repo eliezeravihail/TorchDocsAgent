@@ -125,5 +125,15 @@ def build_index(index_version: str, corpus_dir: Path = CORPUS_DIR, embed_fn=None
             done += len(batch)
             print(f"[embed] {done}/{len(todo)} embedded")
 
+        # purge rows whose chunk no longer exists in the snapshot (renamed
+        # headings, deleted pages) — dead pointers must not win retrieval
+        live_keys = {chunk_key(u) for u in units}
+        stale = [k for k in known if k not in live_keys]
+        for batch in batches(stale, 500):
+            conn.execute("delete from chunks where chunk_key = any(%s)", (batch,))
+        conn.commit()
+        if stale:
+            print(f"[embed] purged {len(stale)} stale chunks")
+
         total = conn.execute("select count(*) from chunks").fetchone()[0]
     return {"snapshot_chunks": len(units), "embedded": len(todo), "db_total": total}

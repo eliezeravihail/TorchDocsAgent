@@ -17,6 +17,9 @@ import yaml
 
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$", re.MULTILINE)
 GITHUB_SOURCE_RE = re.compile(r"https://github\.com/pytorch/[\w.-]+/blob/\S+")
+# Sphinx headerlinks survive HTML→markdown as e.g. [¶](#sgd "Permalink...") —
+# they carry the TRUE anchor, and must not leak into titles/heading paths
+HEADERLINK_RE = re.compile(r"\[[^\]]*\]\(#([^)\s\"]+)[^)]*\)")
 
 
 @dataclass
@@ -33,6 +36,15 @@ def slugify(title: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
 
 
+def clean_heading(raw_title: str) -> tuple[str, str]:
+    """(clean title, anchor): take the real Sphinx anchor from the headerlink
+    when present, strip the link markup from the title, unescape markdown."""
+    match = HEADERLINK_RE.search(raw_title)
+    title = HEADERLINK_RE.sub("", raw_title).replace("\\_", "_").strip()
+    anchor = match.group(1) if match else slugify(title)
+    return title, anchor
+
+
 def split_by_heading(markdown: str) -> list[Section]:
     """Split a page into sections at every heading; preamble becomes section 0."""
     matches = list(HEADING_RE.finditer(markdown))
@@ -44,7 +56,8 @@ def split_by_heading(markdown: str) -> list[Section]:
         sections.append(Section(heading_path=[], title="", text=preamble))
 
     for i, match in enumerate(matches):
-        level, title = len(match.group(1)), match.group(2).strip()
+        level = len(match.group(1))
+        title, anchor = clean_heading(match.group(2).strip())
         end = matches[i + 1].start() if i + 1 < len(matches) else len(markdown)
         text = markdown[match.end() : end].strip()
 
@@ -58,7 +71,7 @@ def split_by_heading(markdown: str) -> list[Section]:
                 heading_path=[t for _, t in stack],
                 title=title,
                 text=text,
-                anchor=slugify(title),
+                anchor=anchor,
                 source_link=source.group(0) if source else "",
             )
         )

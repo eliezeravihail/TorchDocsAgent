@@ -32,6 +32,18 @@ META = {
 }
 
 
+def test_clean_heading_extracts_sphinx_anchor():
+    from ingest.chunk_docs import clean_heading
+
+    title, anchor = clean_heading('SGD[\u00b6](#torch-optim-sgd "Permalink to this heading")')
+    assert title == "SGD"
+    assert anchor == "torch-optim-sgd"
+    title, anchor = clean_heading("Plain Heading")
+    assert (title, anchor) == ("Plain Heading", "plain-heading")
+    title, _ = clean_heading('get\\_tokenizer[\u00b6](#get-tokenizer "p")')
+    assert title == "get_tokenizer"
+
+
 def test_split_by_heading_paths_and_anchors():
     sections = split_by_heading(PAGE_MD)
     assert sections[0].heading_path == []  # preamble
