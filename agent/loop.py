@@ -70,6 +70,19 @@ def answer_agentic(question: str, provider: str | None = None, client=None) -> A
     seen_urls: set[str] = set()
     transcript: list[str] = []
 
+    def do_search(query: str, library=None) -> None:
+        result = search_docs(query, library)
+        for s in result["sections"]:
+            if s["url"] + s.get("anchor", "") not in seen_urls:
+                seen_urls.add(s["url"] + s.get("anchor", ""))
+                sections.append(s)
+        transcript.append(f"search_docs({result['query']!r}) → {result['titles'][:5]}")
+
+    # always retrieve once for the raw question — never depend on a (possibly
+    # rate-limited) planner call just to do the obvious first search
+    budgets["search_docs"] -= 1
+    do_search(question)
+
     for _ in range(MAX_STEPS):
         action = _plan(question, transcript, budgets, provider, client)
         name = action.get("action")
@@ -82,12 +95,7 @@ def answer_agentic(question: str, provider: str | None = None, client=None) -> A
         budgets[name] -= 1
 
         if name == "search_docs":
-            result = search_docs(action.get("query", question), action.get("library"))
-            for s in result["sections"]:
-                if s["url"] + s.get("anchor", "") not in seen_urls:
-                    seen_urls.add(s["url"] + s.get("anchor", ""))
-                    sections.append(s)
-            transcript.append(f"search_docs({result['query']!r}) → {result['titles'][:5]}")
+            do_search(action.get("query", question), action.get("library"))
         elif name == "read_page":
             page = read_page(action.get("url", ""))
             if "content" in page:
