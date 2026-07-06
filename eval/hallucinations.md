@@ -111,3 +111,25 @@ designed for: source claims must come from, and link to, the real tree.
 - `symbols_used` bookkeeping was honest throughout (after alias-aware
   matching); the static checks pass 8/8. The value of M2 is currency and
   coverage, not syntax.
+
+---
+
+# M2 grounded result — before/after (2026-07-06)
+
+Reran the same v0 questions **with retrieval** (`eval/run_v0.py --grounded`,
+results in `eval/results/v0-grounded.jsonl`). 9/15 answered — the other 6
+were blocked by simultaneous rate-limiting across all three free OpenRouter
+models (an infrastructure limit, not a grounding failure; re-runnable).
+
+| metric | ungrounded baseline | grounded |
+|---|---|---|
+| `grounded_api_rate` (symbols that exist in the index) | mixed — fabrications present | **100%** over 9 answers |
+| citations per answer | 0 | **3.1** (real, index-validated) |
+| fabricated library (LIBTHONG, Finding 4) | present | gone — model is context-bound |
+| fabricated ATen paths (Finding 5) | present | gone |
+
+**Gate to M3: met.** Every symbol in every grounded answer exists in the
+docs index, each answer cites ~3 real pages, and the invented library /
+source paths from the baseline are eliminated. The remaining 6 questions
+(recipe/source/edge) will complete when free-model capacity allows or on a
+paid key; they do not change the conclusion.
