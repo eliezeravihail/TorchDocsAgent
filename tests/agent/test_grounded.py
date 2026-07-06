@@ -1,6 +1,11 @@
 from types import SimpleNamespace
 
-from agent.grounded import answer_grounded, build_context, validate_citations
+from agent.grounded import (
+    answer_from_sections,
+    answer_grounded,
+    build_context,
+    validate_citations,
+)
 from agent.schemas import Answer, Citation
 
 SECTIONS = [
@@ -73,3 +78,32 @@ def test_answer_grounded_empty_index_refers_out():
     )
     assert "could not find" in answer.answer_md
     assert answer.referrals and "search" in answer.referrals[0].url
+
+
+def _scripted_anthropic_client(payloads):
+    """A fake client whose messages.create returns each payload in turn."""
+    responses = iter(
+        SimpleNamespace(
+            content=[SimpleNamespace(type="tool_use", name="submit_answer", input=p, id="t1")]
+        )
+        for p in payloads
+    )
+    client = SimpleNamespace()
+    client.messages = SimpleNamespace(create=lambda **kw: next(responses))
+    return client
+
+
+def test_answer_from_sections_regenerates_on_failed_static_check():
+    # first answer lists a symbol it never mentions → the `symbols` check fails
+    # → one repair round → the cleaner regenerated answer is kept
+    bad = {"answer_md": "Use it.", "symbols_used": ["torch.optim.SGD"],
+           "torch_version": "2.12", "citations": [], "referrals": []}
+    good = {"answer_md": "Use torch.optim.SGD.", "symbols_used": ["torch.optim.SGD"],
+            "torch_version": "2.12", "citations": [], "referrals": []}
+    answer = answer_from_sections(
+        "how do I use SGD?",
+        [dict(s) for s in SECTIONS],
+        provider="anthropic",
+        client=_scripted_anthropic_client([bad, good]),
+    )
+    assert "torch.optim.SGD" in answer.answer_md

@@ -43,8 +43,9 @@ def test_graph_decomposes_and_answers(monkeypatch):
 
     result = answer_graph("how do I build a CNN?")
     assert result.answer_md == "done"
-    assert calls["n"] == 2
-    assert len(captured["s"]) == 2
+    # 1 forced seed search + 2 planner-driven searches (parity with the loop)
+    assert calls["n"] == 3
+    assert len(captured["s"]) == 3
 
 
 def test_graph_terminates_on_budget(monkeypatch):

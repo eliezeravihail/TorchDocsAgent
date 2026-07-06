@@ -1,12 +1,17 @@
 """LLM wrapper: one question in, one validated Answer out.
 
-M1 baseline — no retrieval yet. The model answers from its own knowledge,
-which is exactly what eval/hallucinations.md measures before M2 adds
-grounding.
+Three providers behind one dispatch: gemini, anthropic, and any
+OpenAI-compatible host (OpenRouter / DeepInfra / Nebius / ...). The provider
+is chosen by TORCHDOCS_PROVIDER, or auto-detected from whichever API key is
+set (see default_provider). The openai-compat path is the free-tier
+deployment default; anthropic is the paid production path.
 
-Provider is selected by TORCHDOCS_PROVIDER (default "gemini" — free tier
-covers development and eval). "anthropic" is the production path once
-credits exist; LiteLLM replaces this dispatch in M3.
+Every provider returns a schema-valid Answer or raises GenerationError — the
+structured-output mechanism (forced tool call / response_schema / JSON mode)
+is per-provider but the contract is uniform, including one schema-repair
+round. The OpenAI-compatible transport is shared by the schema and raw
+(planner/translation) paths via _compat_client / _compat_complete so the two
+cannot drift.
 """
 
 from __future__ import annotations
@@ -28,7 +33,10 @@ OPENAI_COMPAT_MODEL = os.environ.get(
 
 
 def _compat_models() -> list[str]:
-    return [m.strip() for m in OPENAI_COMPAT_MODEL.split(",") if m.strip()]
+    # re-read env each call so a late-set TORCHDOCS_OPENAI_COMPAT_MODEL (tests,
+    # some deploys) still takes effect; fall back to the import-time default
+    raw = os.environ.get("TORCHDOCS_OPENAI_COMPAT_MODEL") or OPENAI_COMPAT_MODEL
+    return [m.strip() for m in raw.split(",") if m.strip()]
 
 SYSTEM = (
     "You are a PyTorch documentation assistant. Answer the user's question in "
@@ -93,7 +101,11 @@ def _raw_completion(
     client=None,
     timeout: float = 60.0,
 ) -> str:
-    """Plain-text completion (no schema) — for short helper calls like translation."""
+    """Plain-text completion (no schema) — for short helper calls like translation.
+
+    Every provider's failure is wrapped in GenerationError so callers such as
+    the planner (_plan) can catch one exception type and degrade gracefully.
+    """
     provider = provider or default_provider()
 
     if provider == "gemini":
@@ -105,37 +117,27 @@ def _raw_completion(
             if not key:
                 raise GenerationError("GEMINI_API_KEY is not set")
             client = genai.Client(api_key=key, http_options={"timeout": int(timeout * 1000)})
-        response = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=prompt,
-            config=types.GenerateContentConfig(system_instruction=system),
-        )
+        try:
+            response = client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=prompt,
+                config=types.GenerateContentConfig(system_instruction=system),
+            )
+        except Exception as exc:  # noqa: BLE001 — normalize SDK errors for callers
+            raise GenerationError(f"gemini raw completion failed: {exc}") from exc
         return getattr(response, "text", "") or ""
 
     if provider == "openai-compat":
-        import openai
-
-        if client is None:
-            base_url = os.environ.get("OPENAI_COMPAT_BASE_URL") or "https://openrouter.ai/api/v1"
-            key = os.environ.get("OPENAI_COMPAT_API_KEY")
-            if not key:
-                raise GenerationError("OPENAI_COMPAT_API_KEY not set")
-            client = openai.OpenAI(base_url=base_url, api_key=key, timeout=timeout)
-        for attempt in range(3):
-            try:
-                reply = client.chat.completions.create(
-                    model=OPENAI_COMPAT_MODEL,
-                    messages=[
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": prompt},
-                    ],
-                )
-                return reply.choices[0].message.content or ""
-            except openai.APIError as exc:
-                if getattr(exc, "status_code", None) == 429 and attempt < 2:
-                    time.sleep(15 * (attempt + 1))
-                    continue
-                raise GenerationError(f"openai-compat call failed: {exc}") from exc
+        client = _compat_client(client, timeout)
+        response, _ = _compat_complete(
+            client,
+            [
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt},
+            ],
+            json_mode=False,
+        )
+        return response.choices[0].message.content or ""
 
     if provider == "anthropic":
         import anthropic
@@ -144,16 +146,80 @@ def _raw_completion(
             if not os.environ.get("ANTHROPIC_API_KEY"):
                 raise GenerationError("ANTHROPIC_API_KEY is not set")
             client = anthropic.Anthropic()
-        msg = client.messages.create(
-            model=ANTHROPIC_MODEL,
-            max_tokens=256,
-            system=system,
-            messages=[{"role": "user", "content": prompt}],
-            timeout=timeout,
-        )
+        try:
+            msg = client.messages.create(
+                model=ANTHROPIC_MODEL,
+                max_tokens=256,
+                system=system,
+                messages=[{"role": "user", "content": prompt}],
+                timeout=timeout,
+            )
+        except Exception as exc:  # noqa: BLE001 — normalize SDK errors for callers
+            raise GenerationError(f"anthropic raw completion failed: {exc}") from exc
         return "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
 
     raise GenerationError(f"unknown provider: {provider}")
+
+
+# --- OpenAI-compatible transport (shared by the raw and schema paths) --------
+
+
+def _compat_client(client, timeout: float):
+    """Build (or pass through) an OpenAI-compatible client, validating base_url."""
+    if client is not None:
+        return client
+    import openai
+
+    base_url = os.environ.get("OPENAI_COMPAT_BASE_URL") or "https://openrouter.ai/api/v1"
+    if not base_url.startswith("http"):
+        # a misconfigured secret (missing scheme) otherwise surfaces as an
+        # opaque "Connection error" — fail loudly with the offending value
+        raise GenerationError(
+            f"OPENAI_COMPAT_BASE_URL must be a full http(s) URL, got {base_url!r}"
+        )
+    key = os.environ.get("OPENAI_COMPAT_API_KEY")
+    if not key:
+        raise GenerationError("OPENAI_COMPAT_API_KEY not set")
+    print(f"[llm] openai-compat base_url={base_url} models={_compat_models()}", flush=True)
+    return openai.OpenAI(base_url=base_url, api_key=key, timeout=timeout)
+
+
+def _compat_complete(client, messages, *, retries: int = 3, json_mode: bool = False):
+    """Run the model fallback chain with retries; return (response, json_mode).
+
+    Walks _compat_models() so a rate-limited or retired model falls through to
+    the next — the raw and schema paths both go through here, so the fallback
+    behaviour is identical (the earlier raw path only ever tried one model).
+    json_mode may flip off if a host rejects response_format; the updated value
+    is returned so a follow-up call keeps it off.
+    """
+    import openai
+
+    models = _compat_models()
+    last_exc: Exception | None = None
+    for model in models:  # fallback chain across configured models
+        for attempt in range(retries):
+            kwargs = {"response_format": {"type": "json_object"}} if json_mode else {}
+            try:
+                return (
+                    client.chat.completions.create(model=model, messages=messages, **kwargs),
+                    json_mode,
+                )
+            except openai.APIError as exc:
+                last_exc = exc
+                print(f"[llm] {model} error: {type(exc).__name__}: {exc}", flush=True)
+                status = getattr(exc, "status_code", None)
+                if status == 404:  # slug retired → skip to the next model
+                    print(f"[llm] {model} unavailable (404); trying next model")
+                    break
+                if json_mode and status in (400, 422):
+                    json_mode = False  # host rejected JSON mode — prompt+repair covers it
+                    continue
+                if status == 429 and attempt == retries - 1:
+                    print(f"[llm] {model} rate-limited; trying next model")
+                    break  # exhausted this model → next in the chain
+                time.sleep(20 * (attempt + 1) if status == 429 else 2**attempt)
+    raise GenerationError(f"LLM call failed across {len(models)} model(s): {last_exc}")
 
 
 # --- Gemini (default: free tier) -------------------------------------------
@@ -220,55 +286,19 @@ def _parse_gemini(response) -> Answer | None:
 def _answer_openai_compat(
     question: str, system: str, client, retries: int, timeout: float
 ) -> Answer:
-    import openai
-
-    if client is None:
-        base_url = os.environ.get("OPENAI_COMPAT_BASE_URL") or "https://openrouter.ai/api/v1"
-        key = os.environ.get("OPENAI_COMPAT_API_KEY")
-        if not key:
-            raise GenerationError("OPENAI_COMPAT_API_KEY not set")
-        print(f"[llm] openai-compat base_url={base_url} models={_compat_models()}", flush=True)
-        client = openai.OpenAI(base_url=base_url, api_key=key, timeout=timeout)
+    client = _compat_client(client, timeout)
 
     schema_prompt = (
         f"{system}\nReply with ONLY a JSON object matching this schema:\n"
         f"{Answer.model_json_schema()}"
     )
-
-    models = _compat_models()
-    json_mode = True  # dropped for hosts/models that reject response_format
-
-    def generate(messages):
-        nonlocal json_mode
-        last_exc: Exception | None = None
-        for model in models:  # fallback chain across free models
-            for attempt in range(retries):
-                kwargs = {"response_format": {"type": "json_object"}} if json_mode else {}
-                try:
-                    return client.chat.completions.create(
-                        model=model, messages=messages, **kwargs
-                    )
-                except openai.APIError as exc:
-                    last_exc = exc
-                    print(f"[llm] {model} error: {type(exc).__name__}: {exc}", flush=True)
-                    status = getattr(exc, "status_code", None)
-                    if status == 404:  # slug retired → skip to the next model
-                        print(f"[llm] {model} unavailable (404); trying next model")
-                        break
-                    if json_mode and status in (400, 422):
-                        json_mode = False  # host rejected JSON mode — prompt+repair covers it
-                        continue
-                    if status == 429 and attempt == retries - 1:
-                        print(f"[llm] {model} rate-limited; trying next model")
-                        break  # exhausted this model → next in the chain
-                    time.sleep(20 * (attempt + 1) if status == 429 else 2**attempt)
-        raise GenerationError(f"LLM call failed across {len(models)} model(s): {last_exc}")
-
     messages = [
         {"role": "system", "content": schema_prompt},
         {"role": "user", "content": question},
     ]
-    reply = generate(messages).choices[0].message.content or ""
+
+    response, json_mode = _compat_complete(client, messages, retries=retries, json_mode=True)
+    reply = response.choices[0].message.content or ""
     try:
         return Answer.model_validate_json(reply)
     except ValidationError as exc:
@@ -280,7 +310,8 @@ def _answer_openai_compat(
                 "Reply again with only a corrected JSON object.",
             }
         )
-        repaired = generate(messages).choices[0].message.content or ""
+        response, _ = _compat_complete(client, messages, retries=retries, json_mode=json_mode)
+        repaired = response.choices[0].message.content or ""
         try:
             return Answer.model_validate_json(repaired)
         except ValidationError as exc2:

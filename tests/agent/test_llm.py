@@ -103,9 +103,8 @@ def test_openai_compat_falls_back_to_next_model_on_429(monkeypatch):
     def create(**kwargs):
         calls["n"] += 1
         if kwargs["model"] == "model-a":
-            raise openai.RateLimitError(
-                "429", response=SimpleNamespace(status_code=429, headers={}), body=None
-            )
+            resp = SimpleNamespace(status_code=429, headers={}, request=SimpleNamespace())
+            raise openai.RateLimitError("429", response=resp, body=None)
         message = SimpleNamespace(content=Answer(**GOOD_PAYLOAD).model_dump_json())
         return SimpleNamespace(choices=[SimpleNamespace(message=message)])
 
@@ -119,6 +118,36 @@ def test_openai_compat_repair_then_error():
     with pytest.raises(GenerationError, match="after repair"):
         answer_question("q", provider="openai-compat", client=client)
     assert len(client.requests) == 2
+
+
+def test_raw_completion_uses_first_split_model_not_raw_chain(monkeypatch):
+    # regression: _raw_completion (planner/translation) once sent the whole
+    # comma-joined env string as a single model name, breaking every host
+    from agent.llm import _raw_completion
+
+    monkeypatch.setenv("TORCHDOCS_OPENAI_COMPAT_MODEL", "model-a,model-b")
+    seen = []
+
+    def create(**kwargs):
+        seen.append(kwargs["model"])
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="hi"))])
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    out = _raw_completion("q", system="s", provider="openai-compat", client=client)
+    assert out == "hi"
+    assert seen == ["model-a"]  # first model of the split chain
+    assert "," not in seen[0]
+
+
+def test_compat_client_rejects_schemeless_base_url(monkeypatch):
+    # a base_url secret missing https:// otherwise surfaces as an opaque
+    # "Connection error"; fail fast with the offending value instead
+    from agent.llm import _compat_client
+
+    monkeypatch.setenv("OPENAI_COMPAT_BASE_URL", "openrouter.ai/api/v1")
+    monkeypatch.setenv("OPENAI_COMPAT_API_KEY", "sk-test")
+    with pytest.raises(GenerationError, match="full http"):
+        _compat_client(None, timeout=1.0)
 
 
 # --- Anthropic path ----------------------------------------------------------

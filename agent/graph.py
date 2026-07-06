@@ -1,7 +1,9 @@
 """The same agent, as a LangGraph state machine (M3.4).
 
-Identical tools, budgets, and planner as agent/loop.py — only the control flow
-is expressed as an explicit graph instead of a Python while-loop:
+Identical tools, budgets, planner, and forced seed search as agent/loop.py —
+the tool step itself is the shared agent/tools_exec.execute_tool, so the two
+drivers cannot drift. Only the control flow differs: an explicit graph instead
+of a Python while-loop:
 
     planner ──(action?)──▶ tools ──▶ planner        (cycle)
         └────(answer / budget spent)────▶ generate ──▶ END
@@ -50,7 +52,7 @@ def _route(state: AgentState) -> str:
 
 
 def _tools_node(state: AgentState) -> dict:
-    from agent.tools import ask_source, read_page, search_docs
+    from agent.tools_exec import execute_tool
 
     name = state["action"].get("action")
     budgets, sections = dict(state["budgets"]), list(state["sections"])
@@ -62,26 +64,10 @@ def _tools_node(state: AgentState) -> dict:
         return {"budgets": budgets, "transcript": transcript}
     budgets[name] -= 1
 
-    action = state["action"]
-    if name == "search_docs":
-        result = search_docs(action.get("query", state["question"]), action.get("library"))
-        for s in result["sections"]:
-            if s["url"] + s.get("anchor", "") not in seen:
-                seen.add(s["url"] + s.get("anchor", ""))
-                sections.append(s)
-        transcript.append(f"search_docs({result['query']!r}) → {result['titles'][:5]}")
-    elif name == "read_page":
-        page = read_page(action.get("url", ""))
-        if "content" in page:
-            sections.append({"url": page["url"], "anchor": "",
-                             "heading_path": page.get("title", ""), "content": page["content"]})
-            transcript.append(f"read_page({page['url']}) → full page added")
-        else:
-            transcript.append(f"read_page → {page.get('outline') or page.get('error')}")
-    elif name == "ask_source":
-        src = ask_source(action.get("question", state["question"]))
-        referrals.extend(src["referrals"])
-        transcript.append(f"ask_source → {len(src['referrals'])} referral links")
+    execute_tool(
+        name, state["action"], state["question"],
+        sections=sections, referrals=referrals, seen_urls=seen, transcript=transcript,
+    )
 
     return {"budgets": budgets, "sections": sections, "referrals": referrals,
             "seen": seen, "transcript": transcript}
@@ -113,11 +99,23 @@ def build_graph():
 
 def answer_graph(question: str, provider: str | None = None, client=None) -> Answer:
     """Run the LangGraph version; returns the same grounded Answer as the loop."""
+    from agent.tools_exec import do_search
+
     graph = build_graph()
+
+    # same forced seed search as the manual loop — retrieve once for the raw
+    # question before the (possibly rate-limited) planner ever runs
+    budgets = dict(BUDGETS)
+    sections: list[dict] = []
+    seen: set[str] = set()
+    transcript: list[str] = []
+    budgets["search_docs"] -= 1
+    do_search(question, None, sections=sections, seen_urls=seen, transcript=transcript)
+
     initial: AgentState = {
         "question": question, "provider": provider, "client": client,
-        "budgets": dict(BUDGETS), "sections": [], "referrals": [], "seen": set(),
-        "transcript": [], "steps": 0, "action": {}, "answer": None,
+        "budgets": budgets, "sections": sections, "referrals": [], "seen": seen,
+        "transcript": transcript, "steps": 0, "action": {}, "answer": None,
     }
     final = graph.invoke(initial, config={"recursion_limit": 2 * MAX_STEPS + 5})
     return final["answer"] or Answer(answer_md="(no answer produced)", referrals=[Referral(
