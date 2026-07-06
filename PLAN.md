@@ -11,7 +11,7 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
 - **Source-code questions via DeepWiki, never via our own index**: `ask_source` calls DeepWiki's public MCP server on `pytorch/pytorch`; every claim derived from it carries a referral link (`[source]` on the API page / DeepWiki / GitHub search). If DeepWiki is down, the tool degrades to returning referral links only.
 - Corpus scope: the **public documentation site**, tiered (see the seed table in `docs/design-content-and-agent-flow.md` §1.1) — v1 core: API reference (`docs.pytorch.org/docs/{version}`), tutorials, get-started, **torchvision and torchaudio doc sets**; v1.1: the other domain-library doc sets (ExecuTorch, torchao, torchtune, …) added as config-only seeds. **Source code and forums are not indexed**: for implementation questions the agent refers the user out via the `[source]` links captured at crawl time. (Supersedes the earlier five-source-modules scope.)
 - **Pointer-based storage:** the DB does not store page text — only embeddings, tsvector, and pointers (`url`, `anchor`, page title, heading path, content hash). The source of truth for the index is the on-disk crawl snapshot; content is read from it at query time (hydrate), and citations link to the live URLs.
-- Language: Python 3.11+. All LLM calls go through LiteLLM starting from day one of M3 (before that — direct SDK). **Generation in M1–M2 runs on the Gemini free tier (`gemini-2.5-flash`, `TORCHDOCS_PROVIDER=gemini`)**; switching to a paid provider later is a config change, not code.
+- Language: Python 3.11+. LLM calls go through `agent/llm.py`'s provider dispatch (gemini / anthropic / openai-compat) with a free-model fallback chain. (LiteLLM proxy from the original plan was skipped — see M3.3; the dispatch layer covers routing+fallback.) **Generation in M1–M2 runs on the Gemini free tier (`gemini-2.5-flash`, `TORCHDOCS_PROVIDER=gemini`)**; switching to a paid provider later is a config change, not code.
 - **Embeddings: local open model (`BAAI/bge-small-en-v1.5`, 384 dims) on CPU** — no API, no key, no quota, $0. Decided after Gemini's free embedding quota (~100 items/day) proved unable to index a 7K-chunk corpus. The same model embeds chunks (in CI, minutes) and queries (in-app, ~ms); swapping models is an env var + automatic table rebuild.
 - **Open Knowledge Format (OKF)** — Google's markdown + YAML-frontmatter convention for agent-readable knowledge — is used wherever we hand-author or generate *knowledge documents* consumed by agents or humans: doc chunks (2.1), and all `docs/*.md` reports (hallucinations, error-analysis, loop-vs-langgraph). It is **not** used for the `chunks` DB schema or code chunking: that data is pointer-based (no stored content) and already has its own typed columns, so wrapping it in OKF would add a translation layer with no consumer. Use OKF where it replaces ad-hoc formatting, not where it duplicates an existing schema.
 
@@ -90,30 +90,34 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
 ## M3 · The Agent (Weeks 5–6)
 
 ### 3.1 The three tools
-- [ ] [CORE] `agent/tools.py`: `search_docs(query, library=None)` (wraps retrieve+hydrate, returns pointers + section text), `read_page(url)` (whole-page hydrate with outline-first guardrail), `ask_source(question)` (DeepWiki MCP client on `pytorch/pytorch` + domain repos; on failure returns referral links only). Each tool result is a typed dict the LLM sees verbatim.
+- [x] [CORE] `agent/tools.py`: `search_docs(query, library=None)` (wraps retrieve+hydrate, returns pointers + section text), `read_page(url)` (whole-page hydrate with outline-first guardrail), `ask_source(question)` (DeepWiki MCP client on `pytorch/pytorch` + domain repos; on failure returns referral links only). Each tool result is a typed dict the LLM sees verbatim.
   ✔ Done when: each tool has a unit test, and `ask_source` with the network mocked-down still returns usable referral links.
 
 ### 3.2 The manual tool loop
-- [ ] [CORE] `agent/loop.py`: manual tool-calling loop (~100 lines target): the LLM iterates over the three tools within budgets (`search_docs` ≤6, `read_page` ≤2, `ask_source` ≤1) until it declares coverage → generate structured `Answer` → static checks → citations + referrals.
+- [x] [CORE] `agent/loop.py`: manual tool-calling loop (~100 lines target): the LLM iterates over the three tools within budgets (`search_docs` ≤6, `read_page` ≤2, `ask_source` ≤1) until it declares coverage → generate structured `Answer` → static checks → citations + referrals.
   ✔ Done when: "how do I generate music?" produces ≥2 distinct `search_docs` queries and an answer citing several pages; "how do I use SGD?" resolves in a single search; budget exhaustion yields an honest gap answer, not a bluff.
-- [ ] [CORE] Static-check regeneration: if `eval/checks.py` fails (unparseable snippet, symbol not in index, `ask_source` claim without a referral), regenerate once with the specific failures injected; a second failure delivers the answer with a visible warning.
+- [x] [CORE] Static-check regeneration: if `eval/checks.py` fails (unparseable snippet, symbol not in index, `ask_source` claim without a referral), regenerate once with the specific failures injected; a second failure delivers the answer with a visible warning.
   ✔ Done when: a mocked hallucinated symbol triggers exactly one regeneration round.
-- [ ] [CORE] Source-question path: "how is conv2d implemented?" flows docs-first, then `ask_source`, and the answer separates docs-cited content from DeepWiki-derived content with a referral link.
+- [x] [CORE] Source-question path: "how is conv2d implemented?" flows docs-first, then `ask_source`, and the answer separates docs-cited content from DeepWiki-derived content with a referral link.
   ✔ Done when: the answer renders the distinction and the referral URL resolves.
 
-### 3.3 LiteLLM gateway
-- [ ] [CORE] Route all calls through the LiteLLM proxy with config: primary provider + fallback, daily budget, and tag every call (`m3-loop`, `m3-tool-search`...).
-  ✔ Done when: a per-request cost report appears in the LiteLLM logs.
+### 3.3 LiteLLM gateway — ~~[CORE]~~ SKIPPED (2026-07-06)
+- [x] **Decision: skip.** Its value (multi-provider routing, fallback, per-call
+  budgets) is already covered by `agent/llm.py`'s provider dispatch + the
+  comma-separated free-model fallback chain (`_compat_models`). A standalone
+  LiteLLM proxy is heavy infra with marginal benefit on a free-tier,
+  single-host setup. Cost/observability is picked up by Langfuse in M4.
+  Swapping the fallback chain for a LiteLLM base_url later is one env var.
 
 ### 3.4 LangGraph and comparison
-- [ ] [CORE] Rewrite the loop as a LangGraph graph (the exact same nodes).
+- [x] [CORE] Rewrite the loop as a LangGraph graph (the exact same nodes).
   ✔ Done when: both versions pass the same 15-question set with similar results.
-- [ ] [CORE] `docs/loop-vs-langgraph.md`: short comparison — lines of code, ease of debugging, latency. One page, as an OKF unit (YAML frontmatter with `compared` and `date`).
+- [x] [CORE] `docs/loop-vs-langgraph.md`: short comparison — lines of code, ease of debugging, latency. One page, as an OKF unit (YAML frontmatter with `compared` and `date`).
 - [ ] [STRETCH] Expose `search_docs` as an MCP server with FastMCP; test from an MCP client.
 - [ ] [STRETCH] Parallel tool fan-out (several `search_docs` calls concurrently in the LangGraph version).
 - [ ] [STRETCH] Long-term memory (user preferences, torch version) — defer if no time.
 
-**Gate to M4:** a real recipe question and a real source question both go through the tool loop end to end with correct citations/referrals.
+**Gate to M4: ✅ core built (2026-07-06).** Three tools (`agent/tools.py`), manual loop (`agent/loop.py`) and LangGraph twin (`agent/graph.py`) with the same budgets/planner, comparison in `docs/loop-vs-langgraph.md`; LiteLLM skipped (3.3). 72 tests green. Live end-to-end run via the "Ask" workflow.
 
 ---
 

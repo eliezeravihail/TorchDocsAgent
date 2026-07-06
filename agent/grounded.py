@@ -53,6 +53,37 @@ def validate_citations(answer: Answer, sections: list[dict]) -> Answer:
     return answer.model_copy(update={"citations": kept})
 
 
+def answer_from_sections(
+    question: str,
+    sections: list[dict],
+    referrals: list[Referral] | None = None,
+    provider: str | None = None,
+    client=None,
+) -> Answer:
+    """Generate a grounded answer from already-hydrated sections.
+
+    Shared by the single-shot M2 path and the M3 agent loop — both accumulate
+    sections (one pass vs. several tool calls) and end here.
+    """
+    referrals = referrals or []
+    if not sections:
+        return Answer(
+            answer_md=(
+                "I could not find anything in the PyTorch documentation index "
+                "for this question."
+            ),
+            referrals=referrals
+            or [Referral(url=SEARCH_URL + question.replace(" ", "+"), reason="docs search")],
+        )
+
+    user = f"{build_context(sections)}\n\n---\n\nQuestion: {question}"
+    answer = answer_question(user, system=GROUNDED_SYSTEM, provider=provider, client=client)
+    answer = validate_citations(answer, sections)
+    if referrals:  # tool-loop referrals (e.g. ask_source) join any the model added
+        answer = answer.model_copy(update={"referrals": answer.referrals + referrals})
+    return answer
+
+
 def answer_grounded(
     question: str,
     k: int = 8,
@@ -69,18 +100,4 @@ def answer_grounded(
 
     pointers = retrieve_fn(question, k=k)
     sections = [s for s in (hydrate_fn(p) for p in pointers) if s]
-
-    if not sections:
-        return Answer(
-            answer_md=(
-                "I could not find anything in the PyTorch documentation index "
-                "for this question."
-            ),
-            referrals=[
-                Referral(url=SEARCH_URL + question.replace(" ", "+"), reason="docs search")
-            ],
-        )
-
-    user = f"{build_context(sections)}\n\n---\n\nQuestion: {question}"
-    answer = answer_question(user, system=GROUNDED_SYSTEM, provider=provider, client=client)
-    return validate_citations(answer, sections)
+    return answer_from_sections(question, sections, provider=provider, client=client)
