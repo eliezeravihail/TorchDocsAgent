@@ -17,6 +17,8 @@ cannot drift.
 from __future__ import annotations
 
 import os
+import random
+import threading
 import time
 
 from pydantic import ValidationError
@@ -253,6 +255,15 @@ def _raw_dispatch(
 # --- OpenAI-compatible transport (shared by the raw and schema paths) --------
 
 
+# One OpenAI-compatible client per (base_url, key, timeout), reused across
+# requests. openai.OpenAI holds an httpx connection pool, so rebuilding it per
+# call would throw away keep-alive and pay a fresh TLS handshake every LLM hop —
+# wasteful once many questions are answered at once. The client is thread-safe;
+# the lock only guards the one-time build.
+_COMPAT_CLIENTS: dict[tuple, object] = {}
+_COMPAT_CLIENTS_LOCK = threading.Lock()
+
+
 def _compat_client(client, timeout: float):
     """Build (or pass through) an OpenAI-compatible client, validating base_url."""
     if client is not None:
@@ -269,8 +280,14 @@ def _compat_client(client, timeout: float):
     key = os.environ.get("OPENAI_COMPAT_API_KEY")
     if not key:
         raise GenerationError("OPENAI_COMPAT_API_KEY not set")
-    print(f"[llm] openai-compat base_url={base_url} models={_compat_models()}", flush=True)
-    return openai.OpenAI(base_url=base_url, api_key=key, timeout=timeout)
+    cache_key = (base_url, key, timeout)
+    with _COMPAT_CLIENTS_LOCK:
+        cached = _COMPAT_CLIENTS.get(cache_key)
+        if cached is None:
+            print(f"[llm] openai-compat base_url={base_url} models={_compat_models()}", flush=True)
+            cached = openai.OpenAI(base_url=base_url, api_key=key, timeout=timeout)
+            _COMPAT_CLIENTS[cache_key] = cached
+    return cached
 
 
 def _compat_complete(client, messages, *, retries: int = 3, json_mode: bool = False):
@@ -311,8 +328,32 @@ def _compat_complete(client, messages, *, retries: int = 3, json_mode: bool = Fa
                 if status == 429 and attempt == retries - 1:
                     print(f"[llm] {model} rate-limited; trying next model")
                     break  # exhausted this model → next in the chain
-                time.sleep(20 * (attempt + 1) if status == 429 else 2**attempt)
+                if status == 429:
+                    # Honor the server's Retry-After when it gives one; otherwise
+                    # widen the window each attempt. Add jitter so a burst of
+                    # requests that all hit 429 in the same second don't retry in
+                    # lockstep and trip the limit together again.
+                    base = _retry_after_seconds(exc)
+                    base = base if base is not None else 20 * (attempt + 1)
+                    time.sleep(base + random.uniform(0, 1.5))
+                else:
+                    time.sleep(2**attempt)
     raise GenerationError(f"LLM call failed across {len(models)} model(s): {last_exc}")
+
+
+def _retry_after_seconds(exc) -> float | None:
+    """Seconds the server asked us to wait, from a Retry-After header if present.
+
+    Returns None when there is no header or it is an HTTP-date rather than a
+    delta-seconds count, so the caller falls back to its own backoff.
+    """
+    resp = getattr(exc, "response", None)
+    headers = getattr(resp, "headers", None) or {}
+    value = headers.get("retry-after") or headers.get("Retry-After")
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 # --- Gemini (default: free tier) -------------------------------------------

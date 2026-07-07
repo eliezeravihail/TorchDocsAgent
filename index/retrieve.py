@@ -88,14 +88,17 @@ def retrieve(
     setup where keyword search rescues exact symbol names (e.g.
     `scaled_dot_product_attention`) that dense similarity alone misses.
     """
-    from index.db import connect
+    from contextlib import nullcontext
+
+    from index.db import get_pool
     from index.embed import embed_query
 
     embed_fn = embed_fn or embed_query
-    own_conn = conn is None
-    if own_conn:
-        conn = connect()
-    try:
+    # No caller connection → borrow one from the shared pool for these reads and
+    # return it on exit. An injected conn (tests, the batch build) is used as-is
+    # and left open for its owner to manage.
+    ctx = nullcontext(conn) if conn is not None else get_pool().connection()
+    with ctx as conn:
         params: dict[str, Any] = {"pool": pool, "query": query}
         where, extra = "", ""
         if library:
@@ -111,9 +114,6 @@ def retrieve(
         if symbol:
             params["sym"] = f"%{symbol}%"
             symbol_rows = conn.execute(SYMBOL_SQL.format(extra=extra), params).fetchall()
-    finally:
-        if own_conn:
-            conn.close()
 
     channels = [("dense", dense_rows), ("keyword", keyword_rows), ("symbol", symbol_rows)]
     if debug:

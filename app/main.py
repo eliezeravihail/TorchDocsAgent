@@ -5,6 +5,12 @@ question is answered in seconds (unlike the batch Actions runs). Ask in any
 language; the agent translates the query, searches the PyTorch docs, and
 answers with clickable citations.
 
+Concurrent by default: each question is answered from request-local state
+(agent/loop.py builds fresh sections/transcript/budgets per call), so many
+users can be served at once. The Gradio queue is opened to TORCHDOCS_CONCURRENCY
+workers instead of the framework's serial default — the work is almost all I/O
+(LLM + Neon), so it overlaps cleanly and nobody waits in line.
+
 Run locally:  python -m app.main   (needs NEON_URL + OpenRouter env, see .env)
 Deploy:       Hugging Face Spaces (this file is the Space entrypoint).
 """
@@ -36,6 +42,12 @@ EXAMPLES = [
 
 # Shown under the citations: a link to the PyTorch license, its name as the text.
 LICENSE_NOTE = "<sub>[BSD-3-Clause](https://github.com/pytorch/pytorch/blob/main/LICENSE)</sub>"
+
+# How many questions to answer at once. The default is generous because a
+# request spends nearly all its wall-clock waiting on the LLM and Neon, not on
+# CPU — overlapping them is what turns "wait your turn" into "answered now".
+# Override per deploy (a bigger Space, a paid LLM key) via the env var.
+CONCURRENCY = int(os.environ.get("TORCHDOCS_CONCURRENCY", "16"))
 
 
 def _warm_up() -> None:
@@ -97,8 +109,20 @@ def build_ui():
 
 
 def serve(demo) -> None:
-    """Launch the UI with the deployment bind settings (shared by both entrypoints)."""
-    demo.launch(server_name="0.0.0.0", server_port=int(os.environ.get("PORT", 7860)))
+    """Launch the UI with the deployment bind settings (shared by both entrypoints).
+
+    Opening the queue is what makes the app concurrent: Gradio 4/5 default every
+    event to a serial `concurrency_limit=1`, so without this each user waits for
+    the previous answer to finish. `max_threads` is lifted in step so the worker
+    pool — which also holds threads parked in retry back-off on a 429 — never
+    becomes the hidden ceiling below CONCURRENCY.
+    """
+    demo.queue(default_concurrency_limit=CONCURRENCY)
+    demo.launch(
+        server_name="0.0.0.0",
+        server_port=int(os.environ.get("PORT", 7860)),
+        max_threads=max(40, CONCURRENCY * 2),
+    )
 
 
 def main() -> None:

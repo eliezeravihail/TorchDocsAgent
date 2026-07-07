@@ -71,6 +71,31 @@ def test_non_symbol_query_skips_symbol_channel():
     assert len(conn.queries) == 2  # no symbol channel
 
 
+def test_retrieve_without_conn_borrows_and_returns_pool_connection(monkeypatch):
+    # with no caller conn, retrieve() must take a connection from the shared pool
+    # and hand it back (context-manager exit) so the pool isn't drained under load
+    conn = FakeConn([[_row("d1")], [_row("k1")]])
+    returned = {"n": 0}
+
+    class FakePoolCtx:
+        def __enter__(self):
+            return conn
+
+        def __exit__(self, *exc):
+            returned["n"] += 1
+            return False
+
+    class FakePool:
+        def connection(self):
+            return FakePoolCtx()
+
+    monkeypatch.setattr("index.db.get_pool", lambda: FakePool())
+    results = retrieve("early stopping", k=2, embed_fn=lambda q: [0.0] * 384)
+
+    assert {r["chunk_key"] for r in results} == {"d1", "k1"}
+    assert returned["n"] == 1  # connection was returned to the pool exactly once
+
+
 def _api_row(key, symbol):
     url = f"https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.{symbol}.html"
     return (key, url, "", "", "", "core", "api", "")
