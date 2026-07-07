@@ -1,67 +1,51 @@
 """Input guardrail — one check on the user's raw question at the trust boundary.
 
 Runs ONCE on the incoming user question (in app.main.respond / scripts.ask),
-never on the internal planner / tool / translation / repair calls that form an
-answer — those operate on an already-vetted question and on trusted docs
-content, so re-checking them would waste CPU and could false-block on doc text.
+never on the internal planner / tool / repair calls that form an answer —
+those operate on an already-vetted question and on trusted docs content.
 
-Three cheap checks, short-circuited cheapest-first:
+Two cheap checks, short-circuited cheapest-first:
   1. length      — reject oversized pastes before anything else
-  2. injection   — a local CPU classifier flags prompt-injection / jailbreak
-                   attempts ("ignore your rules …")
-  3. topicality  — the question must actually retrieve something close in the
-                   PyTorch docs, else it's someone using the bot as a free
-                   general-purpose LLM. English-only: the embedding model is
-                   English-only, so a non-English question (a supported feature
-                   — it is translated before retrieval) would always look "far"
-                   and be false-blocked. Skipped for non-English input; the
-                   grounding contract downstream keeps such answers honest.
+  2. topicality  — translate the question to English (the corpus and embedder
+                   are English-only), embed it, and require its nearest doc
+                   chunk to be within a calibrated cosine distance.
 
-Fail-open by design: if the classifier can't load (e.g. a gated model whose
-license wasn't accepted) or retrieval errors, we log and ALLOW — the guard can
-never take the app down. A failed classifier load is cached with a cooldown so
-it isn't re-attempted (a slow hub download) on every question. Toggle
-everything off with TORCHDOCS_GUARD=0.
+Membership in the docs' embedding space IS the policy: this app answers
+PyTorch questions, full stop. An off-topic request and a prompt-injection
+("ignore your rules and …") both land far from the corpus and get the same
+refusal — no dedicated injection classifier needed (an earlier design used
+one; it cost an extra model and still missed injections wrapped in on-topic
+questions). What passes the gate is safe regardless, because of the grounding
+contract downstream: answers come only from retrieved doc sections, citations
+are validated against the provided context, code is statically checked, and
+the agent's tools have no side effects.
 
-Deps (classifier / distance functions) are injectable so tests run without the
-model download or a live database.
+The translator is the one LLM this check trusts, so it is prompt-hardened
+(agent/translate.py): delimited input framed as data, embedded instructions
+translated literally, and sanity bounds on the output. Its result is cached,
+so the seed search reuses the SAME translation — the guard adds no extra LLM
+call.
+
+Fail-open by design: if translation or retrieval errors, we log and ALLOW —
+the guard can never take the app down. Toggle off with TORCHDOCS_GUARD=0.
+
+Deps (translate / distance functions) are injectable so tests run without an
+LLM or a live database.
 """
 
 from __future__ import annotations
 
 import os
-import threading
-import time
 from collections.abc import Callable
 from typing import NamedTuple
 
-# Comma-separated fallback chain, same pattern as the LLM model chain. The app
-# is multilingual BY DESIGN (questions arrive in any language), so the
-# multilingual classifier comes first: Meta's Llama-Prompt-Guard-2-22M — tiny
-# (~45MB) but GATED, so it needs a one-time license acceptance on Hugging Face
-# plus an HF_TOKEN secret on the Space. When it can't load (no token yet), the
-# chain falls back to the non-gated English-only protectai model rather than
-# running with no injection check at all.
-DEFAULT_PROMPTGUARD_MODELS = (
-    "meta-llama/Llama-Prompt-Guard-2-22M,"
-    "protectai/deberta-v3-base-prompt-injection-v2"
-)
-
-
-def _promptguard_models() -> list[str]:
-    raw = os.environ.get("TORCHDOCS_PROMPTGUARD_MODEL", DEFAULT_PROMPTGUARD_MODELS)
-    return [m.strip() for m in raw.split(",") if m.strip()]
-
 # cosine distance (pgvector <=>, 0=identical..2=opposite). A question whose
-# nearest doc chunk is farther than this is treated as off-topic. CONSERVATIVE
-# default — calibrate against the live index (see the module docstring / plan)
-# before tightening, so real PyTorch questions are never blocked.
+# nearest doc chunk is farther than this is treated as off-topic. Calibrate
+# against the live index with scripts/calibrate_guard.py (workflow
+# "Calibrate guard") before tightening, so real PyTorch questions are never
+# blocked; keep it conservative until calibrated.
 DEFAULT_TOPICALITY_MAX_DISTANCE = 0.80
 
-REFUSAL_INJECTION = (
-    "I'm a PyTorch-documentation assistant and can't act on instructions that "
-    "try to override that. Ask me a PyTorch question and I'll help."
-)
 REFUSAL_OFFTOPIC = (
     "I only answer questions grounded in the PyTorch documentation — try asking "
     "about a PyTorch API, concept, or usage pattern."
@@ -74,7 +58,7 @@ REFUSAL_TOO_LONG = (
 
 class Verdict(NamedTuple):
     ok: bool
-    reason: str = ""  # "" | "too_long" | "injection" | "off_topic"
+    reason: str = ""  # "" | "too_long" | "off_topic"
     message: str = ""  # user-facing refusal when not ok
 
 
@@ -97,114 +81,37 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
-# --- prompt-injection classifier (local, CPU) --------------------------------
-
-# Built at most once (double-checked lock, same pattern as the embedding model
-# in index/embed.py). A FAILED load is also remembered: retrying would
-# re-attempt a hub download on every question, adding seconds of latency while
-# the check silently no-ops anyway. After the cooldown the load is attempted
-# again, so a transient hub outage doesn't disable the check for the process's
-# lifetime.
-_CLF_LOCK = threading.Lock()
-_CLF = None
-_CLF_RETRY_AT = 0.0
-CLF_RETRY_SECONDS = 600.0
-
-
-def _build_pipeline(model: str):
-    from transformers import pipeline
-
-    return pipeline(
-        "text-classification", model=model, device=-1, truncation=True, max_length=512
-    )
-
-
-def _classifier():
-    """The first loadable classifier in the chain, or None while cooling down.
-
-    The chain exists for the gated-model case: the preferred multilingual
-    classifier needs a license + HF token, and a deploy that lacks them should
-    degrade to the open English-only model — not to no injection check at all.
-    """
-    global _CLF, _CLF_RETRY_AT
-    if _CLF is not None:
-        return _CLF
-    with _CLF_LOCK:
-        if _CLF is not None:
-            return _CLF
-        now = time.monotonic()
-        if now < _CLF_RETRY_AT:
-            return None
-        models = _promptguard_models()
-        for model in models:  # fallback chain: multilingual first, non-gated second
-            try:
-                print(f"[guard] loading injection classifier {model} (CPU)", flush=True)
-                _CLF = _build_pipeline(model)
-                return _CLF
-            except Exception as exc:  # noqa: BLE001 — try the next model in the chain
-                print(f"[guard] classifier {model} failed to load ({exc})", flush=True)
-        _CLF_RETRY_AT = now + CLF_RETRY_SECONDS
-        print(
-            f"[guard] no injection classifier could load (tried {len(models)}); "
-            f"injection check DISABLED for {int(CLF_RETRY_SECONDS)}s",
-            flush=True,
-        )
-        return None
-
-
-# labels the various models use for "not an attack"; anything else = attack
-_BENIGN_LABELS = {"BENIGN", "SAFE", "NEGATIVE", "LABEL_0", "0"}
-
-
-def _injection_score(question: str) -> float | None:
-    """P(prompt injection / jailbreak) in [0, 1], or None if the classifier is down."""
-    clf = _classifier()
-    if clf is None:
-        return None
-    result = clf(question)[0]
-    label = str(result["label"]).upper()
-    score = float(result["score"])
-    return (1.0 - score) if label in _BENIGN_LABELS else score
-
-
-def _score_safe(score_fn: Callable[[str], float | None], question: str) -> float | None:
-    try:
-        return score_fn(question)
-    except Exception as exc:  # noqa: BLE001 — fail-open: an unavailable classifier must not block
-        print(f"[guard] injection classifier unavailable ({exc}); allowing", flush=True)
-        return None
-
-
-# --- topicality (reuses the retrieval index) ---------------------------------
-
-
-def _is_on_topic(question: str, distance_fn: Callable[[str], float | None] | None) -> bool:
-    from agent.translate import looks_english
-
-    if not looks_english(question):
-        # the embedder is English-only: a legitimate non-English question always
-        # looks "far", so distance carries no signal here. Skip, don't false-block.
-        return True
+def _is_on_topic(
+    question: str,
+    distance_fn: Callable[[str], float | None] | None,
+    translate_fn: Callable[[str], str] | None,
+) -> bool:
+    if translate_fn is None:
+        from agent.translate import translate_to_english as translate_fn
     if distance_fn is None:
         from index.retrieve import top_distance
 
         distance_fn = top_distance
     try:
-        distance = distance_fn(question)
-    except Exception as exc:  # noqa: BLE001 — fail-open on any retrieval error
+        english = translate_fn(question)
+        distance = distance_fn(english)
+    except Exception as exc:  # noqa: BLE001 — fail-open on any translation/retrieval error
         print(f"[guard] topicality check skipped ({exc}); allowing", flush=True)
         return True
     if distance is None:  # empty index — a deploy problem, not the user's fault
         return True
     max_distance = _env_float("TORCHDOCS_TOPICALITY_MAX_DISTANCE", DEFAULT_TOPICALITY_MAX_DISTANCE)
-    return distance <= max_distance
+    if distance > max_distance:
+        print(f"[guard] off-topic (distance={distance:.3f} > {max_distance})", flush=True)
+        return False
+    return True
 
 
 def guard(
     question: str,
     *,
-    injection_score_fn: Callable[[str], float | None] | None = None,
     distance_fn: Callable[[str], float | None] | None = None,
+    translate_fn: Callable[[str], str] | None = None,
 ) -> Verdict:
     """Vet one user question. Returns Verdict(ok=True) to proceed, else a refusal."""
     if not _enabled():
@@ -215,20 +122,7 @@ def guard(
         print(f"[guard] blocked over-long question ({len(question)} chars)", flush=True)
         return Verdict(False, "too_long", REFUSAL_TOO_LONG)
 
-    threshold = _env_float("TORCHDOCS_PROMPTGUARD_THRESHOLD", 0.5)
-    score = _score_safe(injection_score_fn or _injection_score, question)
-    if score is not None and score >= threshold:
-        print(f"[guard] blocked injection (score={score:.2f})", flush=True)
-        return Verdict(False, "injection", REFUSAL_INJECTION)
-
-    if not _is_on_topic(question, distance_fn):
-        print("[guard] blocked off-topic question", flush=True)
+    if not _is_on_topic(question, distance_fn, translate_fn):
         return Verdict(False, "off_topic", REFUSAL_OFFTOPIC)
 
     return _OK
-
-
-def warm_up() -> None:
-    """Preload the classifier so the first guarded question isn't slow."""
-    if _enabled():
-        _classifier()

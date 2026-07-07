@@ -41,7 +41,6 @@ The repo **is** the Space: the YAML header above configures it, `app.py` is the 
 | `OPENAI_COMPAT_API_KEY` | your OpenRouter key |
 | `TORCHDOCS_OPENAI_COMPAT_MODEL` | comma-separated free model slugs (a fallback chain) |
 | `GEMINI` / `GEMINI_API_KEY` | fallback provider key |
-| `HF_TOKEN` | unlocks the gated **multilingual** prompt-injection classifier ([accept its license](https://huggingface.co/meta-llama/Llama-Prompt-Guard-2-22M) first); without it the guard falls back to an English-only classifier |
 
 If the primary provider is unreachable or a free model is rate-limited, the app **self-heals** to the next model, then to any other provider that has a key — so one broken secret doesn't take the Space down. A push-triggered smoke test ([`.github/workflows/smoke-hf.yml`](.github/workflows/smoke-hf.yml)) asks the live Space a question after each deploy and fails if it can't answer. See [docs/deploy-hf-spaces.md](docs/deploy-hf-spaces.md) for the full walkthrough.
 

@@ -86,19 +86,17 @@ def _rate_limited(client_id: str) -> bool:
 
 
 def _warm_up() -> None:
-    """Load the embedding model (and the guard classifier) so the first question isn't slow."""
+    """Load the embedding model once so the first question isn't slow.
+
+    This also covers the guard: its topicality check embeds the (translated)
+    question with the same model.
+    """
     try:
         from index.embed import embed_query
 
         embed_query("warmup")
     except Exception as exc:  # noqa: BLE001 — warmup is best-effort
         print(f"[app] warmup skipped: {exc}")
-    try:
-        from agent.guard import warm_up
-
-        warm_up()
-    except Exception as exc:  # noqa: BLE001 — guard is fail-open; warmup is best-effort
-        print(f"[app] guard warmup skipped: {exc}")
 
 
 def render(answer: Answer) -> str:
