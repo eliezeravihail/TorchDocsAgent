@@ -1,7 +1,13 @@
-# Hugging Face Spaces installs from this file. Mirror of pyproject runtime deps + gradio.
+# Hugging Face Spaces installs from this file. Keep it a TRUE mirror of the
+# pyproject [project].dependencies — a missing package here doesn't fail CI
+# (which installs from pyproject) but silently breaks the Space at runtime.
+# e.g. dropping google-genai made the gemini fallback crash with
+# "cannot import name 'genai' from 'google'".
 pydantic>=2
 python-dotenv>=1
 psycopg[binary]>=3.1
+anthropic>=0.40
+google-genai>=1
 openai>=1.50
 sentence-transformers>=3
 langgraph>=0.2
