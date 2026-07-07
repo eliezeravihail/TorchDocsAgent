@@ -46,3 +46,25 @@ def test_hydrate_page_oversized_returns_outline(tmp_path, monkeypatch):
     result = hydrate_page(URL, tmp_path)
     assert "content" not in result
     assert any("SGD" in item for item in result["outline"])
+
+
+def test_hydrate_section_returns_the_pointed_part(tmp_path, monkeypatch):
+    # a size-split section: the pointer's `part` selects WHICH slice comes back
+    import ingest.chunk_docs as cd
+
+    monkeypatch.setattr(cd, "CHUNK_TARGET_CHARS", 120)
+    # each paragraph fits the limit alone; together they overflow -> 2 parts
+    html = (
+        "<html><head><title>Big</title></head><body><div role=\"main\">"
+        "<h1>Guide</h1><p>" + "alpha " * 15 + "</p><p>" + "omega " * 15 + "</p>"
+        "</div></body></html>"
+    )
+    url = "https://docs.pytorch.org/docs/stable/big.html"
+    save_page(url, "core", html, tmp_path)
+
+    first = hydrate_section({"url": url, "heading_path": "Guide", "part": 0}, tmp_path)
+    second = hydrate_section({"url": url, "heading_path": "Guide", "part": 1}, tmp_path)
+    assert first and "alpha" in first["content"] and "omega" not in first["content"]
+    assert second and "omega" in second["content"] and "alpha" not in second["content"]
+    # a pointer to a part that no longer exists drops cleanly
+    assert hydrate_section({"url": url, "heading_path": "Guide", "part": 9}, tmp_path) is None

@@ -58,3 +58,14 @@ def test_iter_corpus_units_walks_snapshot(tmp_path):
     assert units, "expected chunks from the snapshot page"
     assert all(u["url"].endswith("optim.html") for u in units)
     assert any("SGD" in " > ".join(u["heading_path"]) for u in units)
+
+
+def test_chunk_key_part_zero_keeps_the_legacy_format():
+    # backward compatibility is the whole point: introducing parts must not
+    # change existing rows' keys, or the next build re-embeds the entire corpus
+    from index.embed import chunk_key
+
+    unit = {"url": "https://x/p.html", "anchor": "a", "heading_path": ["A", "B"]}
+    assert chunk_key({**unit, "part": 0}) == chunk_key(unit)
+    assert chunk_key({**unit, "part": 1}) != chunk_key(unit)
+    assert chunk_key({**unit, "part": 1}) != chunk_key({**unit, "part": 2})

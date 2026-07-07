@@ -35,6 +35,11 @@ EMBED_RECIPE = "v2-heading-url-enriched"
 
 def chunk_key(unit: dict) -> str:
     raw = f"{unit['url']}#{unit['anchor']}#{' > '.join(unit['heading_path'])}"
+    # part 0 keeps the legacy key format on purpose: existing rows stay valid
+    # and the (chunk_key, content_hash) skip still holds, so introducing
+    # size-capped parts embeds ONLY the new part-rows — no full re-embed.
+    if unit.get("part", 0):
+        raw += f"#part{unit['part']}"
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
@@ -121,14 +126,15 @@ def existing_hashes(conn) -> dict[str, str]:
 
 UPSERT = """
 insert into chunks (chunk_key, url, anchor, page_title, heading_path, library,
-                    kind, source_link, content_hash, index_version, embedding, tsv)
-values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, to_tsvector('english', %s))
+                    kind, source_link, content_hash, index_version, part,
+                    embedding, tsv)
+values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, to_tsvector('english', %s))
 on conflict (chunk_key) do update set
     page_title = excluded.page_title, heading_path = excluded.heading_path,
     library = excluded.library, kind = excluded.kind,
     source_link = excluded.source_link, content_hash = excluded.content_hash,
-    index_version = excluded.index_version, embedding = excluded.embedding,
-    tsv = excluded.tsv
+    index_version = excluded.index_version, part = excluded.part,
+    embedding = excluded.embedding, tsv = excluded.tsv
 """
 
 
@@ -168,6 +174,7 @@ def build_index(index_version: str, corpus_dir: Path = CORPUS_DIR, embed_fn=None
                             unit["source_link"],
                             unit["content_hash"],
                             index_version,
+                            unit.get("part", 0),
                             str(vector),
                             indexed_text(unit),
                         ),
