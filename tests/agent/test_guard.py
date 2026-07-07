@@ -106,6 +106,7 @@ def test_non_english_question_skips_topicality():
 def test_failed_classifier_load_is_cached_not_retried_per_question(monkeypatch):
     import agent.guard as guard_mod
 
+    monkeypatch.setenv("TORCHDOCS_PROMPTGUARD_MODEL", "org/only-model")
     loads = {"n": 0}
 
     def boom(model):
@@ -118,6 +119,39 @@ def test_failed_classifier_load_is_cached_not_retried_per_question(monkeypatch):
     assert guard("how do I use SGD?", distance_fn=lambda q: ONTOPIC).ok
     assert guard("how do I use a DataLoader?", distance_fn=lambda q: ONTOPIC).ok
     assert loads["n"] == 1
+
+
+def test_classifier_chain_falls_back_to_the_open_model(monkeypatch):
+    # the multilingual default is gated: without an HF token it fails to load,
+    # and the chain must degrade to the open model — not to "no check at all"
+    import agent.guard as guard_mod
+
+    monkeypatch.setenv("TORCHDOCS_PROMPTGUARD_MODEL", "org/gated-model,org/open-model")
+    attempts = []
+
+    def build(model):
+        attempts.append(model)
+        if model == "org/gated-model":
+            raise RuntimeError("401: gated repo, no token")
+        return lambda q: [{"label": "SAFE", "score": 0.9}]
+
+    monkeypatch.setattr(guard_mod, "_build_pipeline", build)
+    v = guard("how do I use SGD?", distance_fn=lambda q: ONTOPIC)
+    assert v.ok  # SAFE at 0.9 → injection score 0.1, under the threshold
+    assert attempts == ["org/gated-model", "org/open-model"]
+
+    # the loaded fallback is cached — the next question loads nothing
+    guard("how do I use a DataLoader?", distance_fn=lambda q: ONTOPIC)
+    assert attempts == ["org/gated-model", "org/open-model"]
+
+
+def test_multilingual_model_leads_the_default_chain(monkeypatch):
+    from agent.guard import _promptguard_models
+
+    monkeypatch.delenv("TORCHDOCS_PROMPTGUARD_MODEL", raising=False)
+    chain = _promptguard_models()
+    assert chain[0] == "meta-llama/Llama-Prompt-Guard-2-22M"  # multilingual by design
+    assert len(chain) == 2  # with a non-gated safety net behind it
 
 
 def test_malformed_env_threshold_falls_back_to_default(monkeypatch):
