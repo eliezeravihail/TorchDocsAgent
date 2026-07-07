@@ -1,5 +1,14 @@
+import pytest
+
 from agent.schemas import Answer, Citation, Referral
 from app.main import render, respond
+
+
+@pytest.fixture(autouse=True)
+def _disable_guard(monkeypatch):
+    # the guard is exercised in tests/agent/test_guard.py; here it would try to
+    # load a real model / hit the DB, so switch it off for the render/respond tests
+    monkeypatch.setenv("TORCHDOCS_GUARD", "0")
 
 
 def test_render_includes_answer_citations_referrals():

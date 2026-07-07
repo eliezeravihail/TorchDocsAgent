@@ -51,13 +51,19 @@ CONCURRENCY = int(os.environ.get("TORCHDOCS_CONCURRENCY", "16"))
 
 
 def _warm_up() -> None:
-    """Load the embedding model once so the first question isn't slow."""
+    """Load the embedding model (and the guard classifier) so the first question isn't slow."""
     try:
         from index.embed import embed_query
 
         embed_query("warmup")
     except Exception as exc:  # noqa: BLE001 — warmup is best-effort
         print(f"[app] warmup skipped: {exc}")
+    try:
+        from agent.guard import warm_up
+
+        warm_up()
+    except Exception as exc:  # noqa: BLE001 — guard is fail-open; warmup is best-effort
+        print(f"[app] guard warmup skipped: {exc}")
 
 
 def render(answer: Answer) -> str:
@@ -84,6 +90,11 @@ def respond(question: str) -> str:
     question = (question or "").strip()
     if not question:
         return "Ask me something about PyTorch."
+    from agent.guard import guard
+
+    verdict = guard(question)  # one check on the raw user input, before the pipeline
+    if not verdict.ok:
+        return verdict.message
     try:
         return render(answer_agentic(question))
     except Exception as exc:  # noqa: BLE001 — never crash the UI
