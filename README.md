@@ -15,6 +15,35 @@ AI-powered chat agent for PyTorch — ask questions about the library, get code 
 
 > The YAML header above configures the Hugging Face Space (SDK + entrypoint); GitHub just renders it as a table. See [docs/deploy-hf-spaces.md](docs/deploy-hf-spaces.md).
 
+## Use it on Hugging Face Spaces
+
+The agent runs as a live web app on Hugging Face Spaces — nothing to install:
+
+**▶️ https://huggingface.co/spaces/eliezeravihail/torchdocs-agent**
+
+Type a question and press **Ask** (or Enter):
+
+- Ask in **any language** — the query is translated to English for retrieval, and the answer comes back grounded in the docs.
+- Every answer lists the **exact documentation pages** it used as clickable citations, plus a link to the source license.
+- Questions about implementation internals (source code) are **referred out** to GitHub / DeepWiki rather than guessed.
+
+Try: *"How do I use torch.optim.SGD with momentum?"*, *"איזה סקדולרים נתמכים בטורץ'?"*, *"How do I build a CNN to classify images?"*
+
+### Deploying your own Space
+
+The repo **is** the Space: the YAML header above configures it, `app.py` is the entrypoint, and `requirements.txt` lists the dependencies. Every push to `main` auto-syncs to the Space via [`.github/workflows/sync-to-hf.yml`](.github/workflows/sync-to-hf.yml). Set these under the Space's **Settings → Variables and secrets**:
+
+| secret | purpose |
+|---|---|
+| `NEON_URL` | Postgres connection string (holds vectors + pointers) |
+| `TORCHDOCS_PROVIDER` | LLM provider, e.g. `openai-compat` (OpenRouter) |
+| `OPENAI_COMPAT_BASE_URL` | e.g. `https://openrouter.ai/api/v1` |
+| `OPENAI_COMPAT_API_KEY` | your OpenRouter key |
+| `TORCHDOCS_OPENAI_COMPAT_MODEL` | comma-separated free model slugs (a fallback chain) |
+| `GEMINI` / `GEMINI_API_KEY` | fallback provider key |
+
+If the primary provider is unreachable or a free model is rate-limited, the app **self-heals** to the next model, then to any other provider that has a key — so one broken secret doesn't take the Space down. A push-triggered smoke test ([`.github/workflows/smoke-hf.yml`](.github/workflows/smoke-hf.yml)) asks the live Space a question after each deploy and fails if it can't answer. See [docs/deploy-hf-spaces.md](docs/deploy-hf-spaces.md) for the full walkthrough.
+
 ## Goals
 
 - Answer natural-language questions about PyTorch APIs, concepts, and usage patterns — from "how do I use SGD?" through "what LR schedulers exist?" to "how do I build a network that detects cats?".
@@ -28,8 +57,8 @@ See [PLAN.md](PLAN.md) for the current roadmap and TODO list.
 ## Building the index
 
 One command crawls the docs site and embeds everything into Neon
-(requires `GEMINI_API_KEY` and `NEON_URL` in `.env`; must run on a machine
-with open internet access):
+(embeddings run locally on CPU, so only `NEON_URL` is needed in `.env`; must
+run on a machine with open internet access):
 
 ```bash
 pip install -e .
