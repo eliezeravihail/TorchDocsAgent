@@ -40,11 +40,15 @@ from collections.abc import Callable
 from typing import NamedTuple
 
 # cosine distance (pgvector <=>, 0=identical..2=opposite). A question whose
-# nearest doc chunk is farther than this is treated as off-topic. Calibrate
-# against the live index with scripts/calibrate_guard.py (workflow
-# "Calibrate guard") before tightening, so real PyTorch questions are never
-# blocked; keep it conservative until calibrated.
-DEFAULT_TOPICALITY_MAX_DISTANCE = 0.80
+# nearest doc chunk is farther than this is treated as off-topic.
+#
+# CALIBRATED against the live index (scripts/calibrate_guard.py, 2026-07-07):
+#   on-topic (v0 eval, 15q):     0.143–0.305
+#   borderline ML-adjacent (en): 0.214–0.255  (allowed — the docs can serve them)
+#   off-topic incl. injections:  0.371–0.545  (all blocked at this threshold)
+# 0.35 sits between the worst on-topic (0.305) and the best off-topic (0.371).
+# Re-run the "Calibrate guard" workflow after major corpus changes.
+DEFAULT_TOPICALITY_MAX_DISTANCE = 0.35
 
 REFUSAL_OFFTOPIC = (
     "I only answer questions grounded in the PyTorch documentation — try asking "
@@ -86,6 +90,8 @@ def _is_on_topic(
     distance_fn: Callable[[str], float | None] | None,
     translate_fn: Callable[[str], str] | None,
 ) -> bool:
+    from agent.translate import looks_english
+
     if translate_fn is None:
         from agent.translate import translate_to_english as translate_fn
     if distance_fn is None:
@@ -94,6 +100,13 @@ def _is_on_topic(
         distance_fn = top_distance
     try:
         english = translate_fn(question)
+        if not looks_english(english):
+            # translation degraded to the original (LLM outage / rate limit) —
+            # the English-only embedder can't measure this text, and calibration
+            # showed untranslated questions land in blocking range (~0.4+).
+            # Fail open rather than punish the user for an outage.
+            print("[guard] topicality skipped (translation unavailable); allowing", flush=True)
+            return True
         distance = distance_fn(english)
     except Exception as exc:  # noqa: BLE001 — fail-open on any translation/retrieval error
         print(f"[guard] topicality check skipped ({exc}); allowing", flush=True)
