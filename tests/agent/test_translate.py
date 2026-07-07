@@ -35,6 +35,16 @@ def test_hebrew_query_is_translated(monkeypatch):
     assert out == "linear learning rate scheduler"
 
 
+def test_multiline_reply_is_collapsed_not_truncated(monkeypatch):
+    # regression: the old code kept only splitlines()[0], silently discarding
+    # the rest of a multi-line reply. Now all lines are joined into one query.
+    monkeypatch.setenv("TORCHDOCS_PROVIDER", "openai-compat")
+    client = _fake_openai_client("linear learning rate\nscheduler LinearLR")
+    out = translate_to_english("סקדולר לינארי", provider="openai-compat", client=client)
+    assert out == "linear learning rate scheduler LinearLR"  # nothing dropped
+    assert "\n" not in out
+
+
 def test_translation_failure_falls_back_to_original():
     def boom(**kw):
         raise RuntimeError("upstream 429")

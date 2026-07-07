@@ -13,7 +13,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from agent.llm import GenerationError, answer_question
+from agent.llm import answer_question
 from eval.checks import format_table, run_checks
 
 QUESTIONS = Path(__file__).parent / "questions_v0.jsonl"
@@ -33,6 +33,14 @@ def _grounded_api_rate(conn, symbols: list[str]) -> float | None:
         ).fetchone()
         hits += 1 if row else 0
     return hits / len(symbols)
+
+
+def _flush(records: list[dict], path: Path) -> None:
+    """Write all results so far. Called after every question so a crash mid-run
+    never discards answers already paid for out of the scarce daily quota."""
+    with path.open("w") as out:
+        for record in records:
+            out.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
 def _load_existing() -> dict[str, dict]:
@@ -62,35 +70,37 @@ def main() -> int:
 
     rows = []
     records = []
-    for line in QUESTIONS.open():
-        q = json.loads(line)
-        if q["id"] in existing:
-            record = existing[q["id"]]
-            print(f"[{q['id']}] kept from previous run", flush=True)
-        else:
-            print(f"[{q['id']}] {q['question'][:70]}...", flush=True)
-            record = {"id": q["id"], "type": q["type"], "question": q["question"]}
-            try:
-                if GROUNDED:
-                    answer = answer_grounded(q["question"])
-                    record["grounded_api_rate"] = _grounded_api_rate(conn, answer.symbols_used)
-                    record["n_citations"] = len(answer.citations)
+    try:
+        with QUESTIONS.open() as questions:
+            for line in questions:
+                q = json.loads(line)
+                if q["id"] in existing:
+                    record = existing[q["id"]]
+                    print(f"[{q['id']}] kept from previous run", flush=True)
                 else:
-                    answer = answer_question(q["question"])
-                record["answer"] = answer.model_dump()
-                record["checks"] = run_checks(answer)
-            except GenerationError as exc:
-                print(f"  generation failed: {exc}")
-                record["error"] = str(exc)
-        records.append(record)
-        if "checks" in record:
-            rows.append((record["id"], record["checks"]))
-    if conn is not None:
-        conn.close()
-
-    with RESULTS.open("w") as out:
-        for record in records:
-            out.write(json.dumps(record, ensure_ascii=False) + "\n")
+                    print(f"[{q['id']}] {q['question'][:70]}...", flush=True)
+                    record = {"id": q["id"], "type": q["type"], "question": q["question"]}
+                    try:
+                        if GROUNDED:
+                            answer = answer_grounded(q["question"])
+                            record["grounded_api_rate"] = _grounded_api_rate(
+                                conn, answer.symbols_used
+                            )
+                            record["n_citations"] = len(answer.citations)
+                        else:
+                            answer = answer_question(q["question"])
+                        record["answer"] = answer.model_dump()
+                        record["checks"] = run_checks(answer)
+                    except Exception as exc:  # noqa: BLE001 — record & continue, never lose the run
+                        print(f"  failed: {type(exc).__name__}: {exc}")
+                        record["error"] = str(exc)
+                records.append(record)
+                if "checks" in record:
+                    rows.append((record["id"], record["checks"]))
+                _flush(records, RESULTS)  # persist after every question
+    finally:
+        if conn is not None:
+            conn.close()
 
     if rows:
         print("\n" + format_table(rows))

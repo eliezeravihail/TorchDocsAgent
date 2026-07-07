@@ -56,7 +56,7 @@ def page_path(url: str, corpus_dir: Path = CORPUS_DIR) -> Path:
 
 def load_page(path: Path) -> tuple[dict, str]:
     """Read one snapshot file → (frontmatter dict, markdown body)."""
-    _, frontmatter, body = path.read_text().split("---\n", 2)
+    _, frontmatter, body = path.read_text(encoding="utf-8").split("---\n", 2)
     return yaml.safe_load(frontmatter), body.lstrip("\n")
 
 
@@ -83,7 +83,9 @@ def save_page(
         "crawled_at": datetime.now(UTC).strftime("%Y-%m-%d"),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"---\n{yaml.safe_dump(meta, sort_keys=True)}---\n\n{body}\n")
+    path.write_text(
+        f"---\n{yaml.safe_dump(meta, sort_keys=True)}---\n\n{body}\n", encoding="utf-8"
+    )
     return True
 
 

@@ -1,5 +1,7 @@
 """Structured output schemas for the agent."""
 
+from __future__ import annotations
+
 from pydantic import BaseModel, Field
 
 

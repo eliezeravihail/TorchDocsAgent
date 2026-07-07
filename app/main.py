@@ -91,9 +91,14 @@ def build_ui():
     return demo
 
 
+def serve(demo) -> None:
+    """Launch the UI with the deployment bind settings (shared by both entrypoints)."""
+    demo.launch(server_name="0.0.0.0", server_port=int(os.environ.get("PORT", 7860)))
+
+
 def main() -> None:
     _warm_up()
-    build_ui().launch(server_name="0.0.0.0", server_port=int(os.environ.get("PORT", 7860)))
+    serve(build_ui())
 
 
 if __name__ == "__main__":

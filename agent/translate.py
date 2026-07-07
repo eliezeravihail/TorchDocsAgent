@@ -15,8 +15,9 @@ _NON_LATIN = re.compile(r"[^\x00-\x7f]")
 
 _TRANSLATE_SYSTEM = (
     "You translate PyTorch documentation search queries into concise English "
-    "keyword queries. Reply with ONLY the English query — no quotes, no "
-    "explanation. Keep code identifiers (torch.nn.Linear, SGD, ...) verbatim."
+    "keyword queries. Reply with ONLY the English query on a SINGLE line — no "
+    "line breaks, no quotes, no explanation. Keep code identifiers "
+    "(torch.nn.Linear, SGD, ...) verbatim."
 )
 
 
@@ -36,9 +37,12 @@ def translate_to_english(query: str, *, provider: str | None = None, client=None
     try:
         english = _raw_completion(
             query, system=_TRANSLATE_SYSTEM, provider=provider, client=client
-        ).strip()
+        )
     except Exception as exc:  # noqa: BLE001 — translation is best-effort, never fatal
         print(f"[translate] failed ({exc}); falling back to the original query")
         return query
-    # a translation should be short; if the model rambled, keep the first line
-    return english.splitlines()[0].strip() if english else query
+    # We ask for one line; if the model still returns several, collapse all
+    # whitespace into a single-line query instead of dropping the tail — the
+    # continuation may hold the discriminating keywords.
+    collapsed = " ".join(english.split())
+    return collapsed or query

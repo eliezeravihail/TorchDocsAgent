@@ -46,12 +46,18 @@ def _load(url: str, corpus_dir: Path) -> tuple[dict, str] | None:
     path = page_path(url, corpus_dir)
     if path.exists():
         return load_page(path)
-    live = _live_page(url)
-    return (live[0], live[1]) if live else None
+    return _live_page(url)
 
 
 def hydrate_section(pointer: dict, corpus_dir: Path = CORPUS_DIR) -> dict | None:
-    """Return the pointer enriched with its section content, or None if gone."""
+    """Return the pointer enriched with its section content, or None if gone.
+
+    If the pointer's heading no longer matches any section (the page changed,
+    or the heading was reformatted), we return None — the section is treated as
+    gone. We deliberately do NOT substitute the page preamble: that would show
+    unrelated text under the section's citation, which breaks the grounding
+    contract silently.
+    """
     loaded = _load(pointer["url"], corpus_dir)
     if loaded is None:
         return None
@@ -60,9 +66,12 @@ def hydrate_section(pointer: dict, corpus_dir: Path = CORPUS_DIR) -> dict | None
     for unit in chunk_page(meta, body):
         if " > ".join(unit["heading_path"]) == heading_path:
             return {**pointer, "content": unit["content"]}
-    # heading not found live (page changed): fall back to the page preamble
-    first = next(iter(chunk_page(meta, body)), None)
-    return {**pointer, "content": first["content"]} if first else None
+    print(
+        f"[hydrate] heading {heading_path!r} not found in {pointer['url']} "
+        "(page changed); dropping the pointer",
+        flush=True,
+    )
+    return None
 
 
 def hydrate_page(url: str, corpus_dir: Path = CORPUS_DIR) -> dict | None:

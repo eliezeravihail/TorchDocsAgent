@@ -3,8 +3,8 @@
 Each step, a planner call returns a JSON action (search_docs / read_page /
 ask_source / answer). We execute it, append a short observation, and repeat
 until the model declares it can answer or a budget trips — then generate the
-grounded Answer from everything accumulated. This is the provider-agnostic
-"manual loop" of M3.3; the LangGraph rewrite (M3.4) uses the same tools.
+grounded Answer from everything accumulated. agent/graph.py is a LangGraph
+twin of this loop that shares the same tools, budgets, and planner.
 """
 
 from __future__ import annotations

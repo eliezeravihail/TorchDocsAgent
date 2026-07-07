@@ -1,4 +1,4 @@
-"""The three tools the M3 agent loop drives.
+"""The three tools the agent loop drives.
 
 - search_docs: hybrid retrieval + hydrate → doc sections (repeatable)
 - read_page:   whole-page hydrate (outline-first for oversized pages)
@@ -15,6 +15,28 @@ from urllib.parse import quote
 
 DEEPWIKI_URL = "https://deepwiki.com/pytorch/pytorch"
 GH_CODE_SEARCH = "https://github.com/search?q=repo%3Apytorch%2Fpytorch+{q}&type=code"
+
+# dropped from the GitHub code-search query: they add no signal and crowd out
+# the discriminating terms (a code-search URL has a practical length limit)
+_STOPWORDS = frozenset(
+    "a an the is are was were be to of in on for how do does did i you it "
+    "what when where why which that this with and or from can could should "
+    "my me use using implement implemented implementation work works".split()
+)
+_MAX_SEARCH_TERMS = 12  # keep the URL sane while retaining the meaningful words
+
+
+def _search_terms(question: str) -> str:
+    """Meaningful words from the question, URL-encoded for GitHub code search.
+
+    Drops stopwords (keeping code identifiers like torch.nn.Linear verbatim)
+    and caps the count so the URL stays sane — without throwing away the words
+    that discriminate the query (the old code kept only the first 6 words,
+    which dropped the actual subject of longer questions).
+    """
+    words = [w for w in question.split() if w.lower().strip("?.,:;()") not in _STOPWORDS]
+    kept = (words or question.split())[:_MAX_SEARCH_TERMS]
+    return quote(" ".join(kept))
 
 
 def search_docs(query: str, library: str | None = None, k: int = 8) -> dict:
@@ -57,7 +79,7 @@ def ask_source(question: str) -> dict:
     """
     from agent.schemas import Referral
 
-    terms = quote(" ".join(question.split()[:6]))
+    terms = _search_terms(question)
     referrals = [
         Referral(url=DEEPWIKI_URL, reason="AI wiki / Q&A over the pytorch/pytorch source"),
         Referral(url=GH_CODE_SEARCH.format(q=terms), reason="search the implementation on GitHub"),

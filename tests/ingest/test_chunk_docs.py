@@ -73,7 +73,23 @@ def test_write_units_valid_okf(tmp_path):
 
     paths = write_units(chunk_page(META, PAGE_MD), tmp_path)
     assert paths
-    _, frontmatter, body = paths[0].read_text().split("---\n", 2)
+    _, frontmatter, body = paths[0].read_text(encoding="utf-8").split("---\n", 2)
     meta = yaml.safe_load(frontmatter)
     assert {"url", "anchor", "heading_path", "library", "kind"} <= set(meta)
     assert body.strip()
+
+
+def test_write_units_same_anchor_sections_dont_collide(tmp_path):
+    # regression: two sections on one page can slugify to the same anchor
+    # (e.g. two "Parameters" headings); each must get its own file, not clobber
+    units = [
+        {"url": META["url"], "anchor": "parameters", "heading_path": ["A", "Parameters"],
+         "library": "core", "kind": "api", "content_hash": "h", "content": "first section"},
+        {"url": META["url"], "anchor": "parameters", "heading_path": ["B", "Parameters"],
+         "library": "core", "kind": "api", "content_hash": "h", "content": "second section"},
+    ]
+    paths = write_units(units, tmp_path)
+    assert len(paths) == 2
+    assert len(set(paths)) == 2  # distinct files, nothing overwritten
+    bodies = {p.read_text(encoding="utf-8").split("---\n", 2)[2].strip() for p in paths}
+    assert bodies == {"first section", "second section"}

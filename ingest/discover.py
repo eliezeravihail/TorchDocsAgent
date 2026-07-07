@@ -64,10 +64,31 @@ def parse_objects_inv(data: bytes, base_url: str) -> list[InvEntry]:
     return entries
 
 
+def _localname(tag: str) -> str:
+    """Strip the ``{namespace}`` prefix ElementTree prepends to tags."""
+    return tag.rsplit("}", 1)[-1]
+
+
 def parse_sitemap(xml_text: str) -> list[str]:
-    """Extract <loc> URLs from a sitemap (namespace-agnostic)."""
+    """Extract page/sub-sitemap <loc> URLs from a sitemap (namespace-agnostic).
+
+    Handles both a <urlset> (page URLs) and a <sitemapindex> (child sitemap
+    URLs). Only the <loc> directly under each <url>/<sitemap> is taken, so
+    nested <image:loc> entries are ignored rather than mistaken for pages.
+    """
     root = ET.fromstring(xml_text)
-    return [el.text.strip() for el in root.iter() if el.tag.endswith("loc") and el.text]
+    urls: list[str] = []
+    for entry in root:
+        if _localname(entry.tag) not in ("url", "sitemap"):
+            continue
+        loc = next((c for c in entry if _localname(c.tag) == "loc" and c.text), None)
+        if loc is not None:
+            urls.append(loc.text.strip())
+    return urls
+
+
+def is_sitemap_index(xml_text: str) -> bool:
+    return _localname(ET.fromstring(xml_text).tag) == "sitemapindex"
 
 
 def fetch(url: str, timeout: float = 30.0) -> bytes:
@@ -78,31 +99,49 @@ def fetch(url: str, timeout: float = 30.0) -> bytes:
     return response.content
 
 
+def _sitemap_pages(base: str, xml_text: str) -> set[str]:
+    """Page URLs from a sitemap, following one level of <sitemapindex>."""
+    import requests
+
+    if not is_sitemap_index(xml_text):
+        return set(parse_sitemap(xml_text))
+    pages: set[str] = set()
+    for sub in parse_sitemap(xml_text):  # child sitemap .xml URLs
+        try:
+            pages.update(parse_sitemap(fetch(sub).decode("utf-8")))
+        except requests.RequestException as exc:
+            print(f"[discover] sub-sitemap {sub} unreachable ({exc})")
+    return pages
+
+
 def discover(seeds: dict[str, str] | None = None) -> dict[str, set[str]]:
     """Return {library: set of page URLs} for the whole corpus.
 
     Per seed: try objects.inv first (API reference), then sitemap.xml
-    (tutorials/guides). A seed that yields neither is reported empty rather
-    than failing the whole run.
+    (tutorials/guides). Only NETWORK errors are tolerated (a genuinely missing
+    inventory/sitemap) — a parse error (PyTorch changing the inventory format)
+    propagates and fails the run loudly rather than silently shrinking the index.
     """
+    import requests
+
     pages: dict[str, set[str]] = {}
     for library, base in (seeds or SEEDS).items():
         found: set[str] = set()
         try:
-            entries = parse_objects_inv(fetch(base + "objects.inv"), base)
+            inv = fetch(base + "objects.inv")
+        except requests.RequestException as exc:
+            print(f"[discover] {library}: no objects.inv ({exc})")
+        else:
             # defense in depth: real doc pages end in .html; anything else is
             # a malformed entry and would just 404 in the crawl
+            entries = parse_objects_inv(inv, base)
             found.update(e.page_url for e in entries if e.page_url.endswith(".html"))
-        except Exception as exc:  # noqa: BLE001 — a missing inventory must not kill the run
-            print(f"[discover] {library}: no objects.inv ({exc})")
         try:
-            found.update(
-                url
-                for url in parse_sitemap(fetch(base + "sitemap.xml").decode("utf-8"))
-                if url.startswith(base)
-            )
-        except Exception as exc:  # noqa: BLE001
+            sitemap = fetch(base + "sitemap.xml").decode("utf-8")
+        except requests.RequestException as exc:
             print(f"[discover] {library}: no sitemap ({exc})")
+        else:
+            found.update(u for u in _sitemap_pages(base, sitemap) if u.startswith(base))
         pages[library] = found
         print(f"[discover] {library}: {len(found)} pages")
     return pages

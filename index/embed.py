@@ -130,9 +130,10 @@ def build_index(index_version: str, corpus_dir: Path = CORPUS_DIR, embed_fn=None
         from index.db import get_meta, set_meta
 
         known = existing_hashes(conn)
+        db_keys = set(known)  # real rows in the DB, used for the stale purge below
         if get_meta(conn, "embed_recipe") != EMBED_RECIPE:
             print(f"[embed] embed recipe changed → full re-embed ({EMBED_RECIPE})")
-            known = {}  # ignore existing rows so every chunk is re-embedded once
+            known = {}  # ignore existing hashes so every chunk is re-embedded once
         todo = [u for u in units if known.get(chunk_key(u)) != u["content_hash"]]
         print(f"[embed] {len(units)} chunks in snapshot, {len(todo)} new/changed to embed")
 
@@ -163,9 +164,11 @@ def build_index(index_version: str, corpus_dir: Path = CORPUS_DIR, embed_fn=None
             print(f"[embed] {done}/{len(todo)} embedded")
 
         # purge rows whose chunk no longer exists in the snapshot (renamed
-        # headings, deleted pages) — dead pointers must not win retrieval
+        # headings, deleted pages) — dead pointers must not win retrieval.
+        # Purge off db_keys, not `known`: a recipe bump zeroes `known`, and
+        # purging off it would silently never delete anything.
         live_keys = {chunk_key(u) for u in units}
-        stale = [k for k in known if k not in live_keys]
+        stale = [k for k in db_keys if k not in live_keys]
         for batch in batches(stale, 500):
             conn.execute("delete from chunks where chunk_key = any(%s)", (batch,))
         conn.commit()

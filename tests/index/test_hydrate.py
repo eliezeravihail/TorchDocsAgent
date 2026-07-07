@@ -25,6 +25,14 @@ def test_hydrate_section_missing_page_returns_none(tmp_path, monkeypatch):
     assert hydrate_section({"url": URL, "heading_path": "x"}, tmp_path) is None
 
 
+def test_hydrate_section_heading_gone_returns_none_not_preamble(tmp_path):
+    # regression: when the pointer's heading no longer matches, we must NOT
+    # substitute the page preamble under the section's citation — return None
+    _snapshot(tmp_path)
+    pointer = {"url": URL, "heading_path": "torch.optim > RMSprop (renamed)"}
+    assert hydrate_section(pointer, tmp_path) is None
+
+
 def test_hydrate_page_returns_full_content(tmp_path):
     _snapshot(tmp_path)
     result = hydrate_page(URL, tmp_path)
