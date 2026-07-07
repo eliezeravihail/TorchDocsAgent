@@ -1,10 +1,28 @@
-from index.retrieve import extract_symbol, retrieve, rrf_merge
+from types import SimpleNamespace
+
+from index.retrieve import extract_symbol, retrieve, rrf_merge, top_distance
 
 
 def test_rrf_prefers_items_ranked_in_both():
     scores = rrf_merge([["a", "b", "c"], ["b", "d"]])
     assert scores["b"] > scores["a"] > scores["c"]
     assert "d" in scores
+
+
+def _distance_conn(row):
+    return SimpleNamespace(execute=lambda sql, params=None: SimpleNamespace(fetchone=lambda: row))
+
+
+def _emb(q):
+    return [0.0] * 384
+
+
+def test_top_distance_returns_best_cosine_distance():
+    assert top_distance("how do I use SGD?", conn=_distance_conn((0.42,)), embed_fn=_emb) == 0.42
+
+
+def test_top_distance_none_on_empty_index():
+    assert top_distance("anything", conn=_distance_conn(None), embed_fn=_emb) is None
 
 
 def test_extract_symbol():

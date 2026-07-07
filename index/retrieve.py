@@ -73,6 +73,33 @@ def _rows_to_pointers(rows: list[tuple]) -> dict[str, dict[str, Any]]:
     return {row[0]: dict(zip(keys, row, strict=True)) for row in rows}
 
 
+def top_distance(query: str, conn=None, embed_fn=None) -> float | None:
+    """Smallest cosine distance between the query and any chunk (0 = identical).
+
+    A topicality signal for the input guard: the dense channel always returns
+    the nearest chunks, so "did it return rows" can't tell on-topic from
+    off-topic — but an off-topic query's *nearest* chunk is still far. Returns
+    None if the index is empty. pgvector `<=>` is cosine distance in [0, 2].
+    """
+    from index.db import connect
+    from index.embed import embed_query
+
+    embed_fn = embed_fn or embed_query
+    own_conn = conn is None
+    if own_conn:
+        conn = connect()
+    try:
+        row = conn.execute(
+            "select embedding <=> %(vector)s::vector as dist from chunks "
+            "order by dist limit 1",
+            {"vector": str(embed_fn(query))},
+        ).fetchone()
+    finally:
+        if own_conn:
+            conn.close()
+    return float(row[0]) if row else None
+
+
 def retrieve(
     query: str,
     k: int = 8,
