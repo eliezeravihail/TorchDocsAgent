@@ -25,11 +25,16 @@ from agent.schemas import Answer
 
 GEMINI_MODEL = os.environ.get("TORCHDOCS_GEMINI_MODEL", "gemini-2.5-flash")
 ANTHROPIC_MODEL = os.environ.get("TORCHDOCS_ANTHROPIC_MODEL", "claude-sonnet-5")
-# any OpenAI-compatible host (DeepInfra, Nebius, OpenRouter, ...) — see .env.example.
-# comma-separated → fallback chain: if one model is rate-limited/gone, try the next
-OPENAI_COMPAT_MODEL = os.environ.get(
-    "TORCHDOCS_OPENAI_COMPAT_MODEL", "deepseek-ai/DeepSeek-V4-Flash"
+# any OpenAI-compatible host (OpenRouter, DeepInfra, Nebius, ...) — see .env.example.
+# comma-separated → fallback chain: if one model is rate-limited/gone, try the next.
+# Default is a chain of real OpenRouter free-tier slugs (org/model:free); an
+# invalid slug is the classic "OpenRouter never answers" bug — every call 404s.
+DEFAULT_COMPAT_MODELS = (
+    "deepseek/deepseek-chat-v3-0324:free,"
+    "meta-llama/llama-3.3-70b-instruct:free,"
+    "google/gemini-2.0-flash-exp:free"
 )
+OPENAI_COMPAT_MODEL = os.environ.get("TORCHDOCS_OPENAI_COMPAT_MODEL", DEFAULT_COMPAT_MODELS)
 
 
 def _compat_models() -> list[str]:
@@ -51,6 +56,21 @@ class GenerationError(RuntimeError):
     """The model could not produce a schema-valid answer."""
 
 
+def _gemini_key() -> str | None:
+    """Gemini key under any of the common secret names.
+
+    Deploys name this secret inconsistently — GEMINI_API_KEY (what the SDK
+    docs use), a bare GEMINI, or GOOGLE_API_KEY. Accept all so a
+    correctly-set-but-mis-named secret still enables the gemini fallback
+    instead of silently disabling it.
+    """
+    return (
+        os.environ.get("GEMINI_API_KEY")
+        or os.environ.get("GEMINI")
+        or os.environ.get("GOOGLE_API_KEY")
+    )
+
+
 def _configured_providers() -> list[str]:
     """Providers whose API key is present, in preference order."""
     avail = []
@@ -58,7 +78,7 @@ def _configured_providers() -> list[str]:
         avail.append("openai-compat")
     if os.environ.get("ANTHROPIC_API_KEY"):
         avail.append("anthropic")
-    if os.environ.get("GEMINI_API_KEY"):
+    if _gemini_key():
         avail.append("gemini")
     return avail
 
@@ -182,7 +202,7 @@ def _raw_dispatch(
         from google.genai import types
 
         if client is None:
-            key = os.environ.get("GEMINI_API_KEY")
+            key = _gemini_key()
             if not key:
                 raise GenerationError("GEMINI_API_KEY is not set")
             client = genai.Client(api_key=key, http_options={"timeout": int(timeout * 1000)})
@@ -276,9 +296,13 @@ def _compat_complete(client, messages, *, retries: int = 3, json_mode: bool = Fa
                 )
             except openai.APIError as exc:
                 last_exc = exc
-                print(f"[llm] {model} error: {type(exc).__name__}: {exc}", flush=True)
+                # a bare "Connection error." hides the real reason (DNS, TLS,
+                # blocked egress); surface the wrapped cause so logs are useful
+                cause = getattr(exc, "__cause__", None)
+                detail = f" (cause: {cause!r})" if cause else ""
+                print(f"[llm] {model} error: {type(exc).__name__}: {exc}{detail}", flush=True)
                 status = getattr(exc, "status_code", None)
-                if status == 404:  # slug retired → skip to the next model
+                if status == 404:  # slug retired / now paid → skip to the next model
                     print(f"[llm] {model} unavailable (404); trying next model")
                     break
                 if json_mode and status in (400, 422):
@@ -299,7 +323,7 @@ def _answer_gemini(question: str, system: str, client, retries: int, timeout: fl
     from google.genai import errors, types
 
     if client is None:
-        key = os.environ.get("GEMINI_API_KEY")
+        key = _gemini_key()
         if not key:
             raise GenerationError("GEMINI_API_KEY is not set")
         client = genai.Client(api_key=key, http_options={"timeout": int(timeout * 1000)})

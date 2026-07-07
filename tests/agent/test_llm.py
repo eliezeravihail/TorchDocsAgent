@@ -167,6 +167,18 @@ def test_answer_question_falls_back_to_next_provider(monkeypatch):
     assert tried == ["openai-compat", "gemini"]  # primary failed, healed to gemini
 
 
+def test_gemini_key_accepts_bare_gemini_secret(monkeypatch):
+    # the HF Space names the secret GEMINI, not GEMINI_API_KEY — the fallback
+    # must still see it, otherwise the gemini safety net is silently disabled
+    from agent.llm import _configured_providers, _gemini_key
+
+    for k in ("GEMINI_API_KEY", "GEMINI", "GOOGLE_API_KEY"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("GEMINI", "g-secret")
+    assert _gemini_key() == "g-secret"
+    assert "gemini" in _configured_providers()
+
+
 def test_compat_client_rejects_schemeless_base_url(monkeypatch):
     # a base_url secret missing https:// otherwise surfaces as an opaque
     # "Connection error"; fail fast with the offending value instead

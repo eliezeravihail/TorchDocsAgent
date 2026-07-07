@@ -84,8 +84,10 @@ def build_ui():
         ask = gr.Button("Ask", variant="primary")
         answer = gr.Markdown(label="Answer")
         gr.Examples(EXAMPLES, inputs=question)
-        ask.click(respond, inputs=question, outputs=answer)
-        question.submit(respond, inputs=question, outputs=answer)
+        # api_name gives the post-deploy smoke test (scripts/smoke_space.py) a
+        # stable Gradio endpoint to call: client.predict(..., api_name="/respond")
+        ask.click(respond, inputs=question, outputs=answer, api_name="respond")
+        question.submit(respond, inputs=question, outputs=answer, api_name=False)
     return demo
 
 
