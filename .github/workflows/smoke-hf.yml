@@ -1,0 +1,33 @@
+name: Smoke-test HF Space
+
+# After the Space finishes syncing/rebuilding, ask it a real question through
+# the Gradio API and fail if it answers with an LLM/transport error. Runs in
+# Actions because the dev sandbox can't reach the Space or OpenRouter.
+on:
+  workflow_run:
+    workflows: ["Sync to Hugging Face Space"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      question:
+        description: Question to ask the Space
+        required: false
+        default: How do I use torch.optim.SGD with momentum?
+
+jobs:
+  smoke:
+    # only after a successful sync, or when triggered by hand
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install "gradio_client>=1" requests
+      - name: Wait for RUNNING and ask a question
+        env:
+          HF_TOKEN: ${{ secrets.GITHUBPUSH }}
+          SPACE_ID: eliezeravihail/torchdocs-agent
+          SMOKE_QUESTION: ${{ github.event.inputs.question }}
+        run: python scripts/smoke_space.py
