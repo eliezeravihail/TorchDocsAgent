@@ -1,14 +1,15 @@
-"""M0 smoke test: verify every external connection works before building anything.
+"""Smoke test: verify every external connection works before building anything.
 
 Checks, in order:
-  1. Neon Postgres  — connect, create a scratch table, write one row, read it back.
-  2. LLM            — one short Anthropic message round-trip.
-  3. Embeddings     — one gemini-embedding-001 call, sanity-check the vector.
+  1. Neon Postgres    — connect, create a scratch table, write one row, read it back.
+  2. Gemini LLM       — one short message round-trip.
+  3. Embeddings       — one local bge-small call, sanity-check the vector dimension.
+  4. Anthropic LLM    — one short message round-trip (optional; skipped if no key).
 
 Run:  python scripts/smoke.py
-Exits 0 only if every configured check passes. A missing key fails that
-check with a clear message instead of a traceback, so partial setups
-still give useful output.
+Exits 0 only if every configured check passes. A missing key skips that
+check (Anthropic) or fails it with a clear message instead of a traceback,
+so partial setups still give useful output.
 """
 
 from __future__ import annotations
@@ -62,7 +63,7 @@ def check_gemini_llm() -> str | None:
 def check_anthropic_llm() -> str | None:
     key = os.environ.get("ANTHROPIC_API_KEY")
     if not key:
-        return SKIP  # optional until M3
+        return SKIP  # optional — Anthropic is the paid production provider
     import anthropic
 
     client = anthropic.Anthropic(api_key=key, timeout=60)
@@ -78,11 +79,12 @@ def check_anthropic_llm() -> str | None:
 
 
 def check_embedding() -> str | None:
+    from index.db import EMBED_DIMS
     from index.embed import embed_texts
 
     vector = embed_texts(["torch.nn.Linear applies an affine transformation"])[0]
-    if len(vector) != 384 or all(v == 0 for v in vector):
-        return f"suspicious embedding: len={len(vector)}"
+    if len(vector) != EMBED_DIMS or all(v == 0 for v in vector):
+        return f"suspicious embedding: len={len(vector)} (expected {EMBED_DIMS})"
     return None
 
 
@@ -92,7 +94,7 @@ def main() -> int:
         ("Neon Postgres (write/read)", check_neon),
         ("Gemini LLM (one message)", check_gemini_llm),
         ("Local embedding (bge-small, one vector)", check_embedding),
-        ("Anthropic LLM (optional until M3)", check_anthropic_llm),
+        ("Anthropic LLM (optional)", check_anthropic_llm),
     ]
     failures = 0
     skipped = 0

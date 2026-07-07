@@ -1,4 +1,4 @@
-"""The same agent, as a LangGraph state machine (M3.4).
+"""The same agent, as a LangGraph state machine.
 
 Identical tools, budgets, planner, and forced seed search as agent/loop.py —
 the tool step itself is the shared agent/tools_exec.execute_tool, so the two
@@ -118,5 +118,13 @@ def answer_graph(question: str, provider: str | None = None, client=None) -> Ans
         "transcript": transcript, "steps": 0, "action": {}, "answer": None,
     }
     final = graph.invoke(initial, config={"recursion_limit": 2 * MAX_STEPS + 5})
-    return final["answer"] or Answer(answer_md="(no answer produced)", referrals=[Referral(
-        url="https://docs.pytorch.org/docs/stable/search.html", reason="docs search")])
+    if final["answer"] is not None:
+        return final["answer"]
+    # generate always produces an Answer, so this is pure defensiveness — keep
+    # it consistent with grounded's empty path instead of a divergent URL
+    from agent.grounded import SEARCH_URL
+
+    return Answer(
+        answer_md="(no answer produced)",
+        referrals=[Referral(url=SEARCH_URL, reason="docs search")],
+    )

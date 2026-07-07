@@ -1,6 +1,7 @@
 """End-to-end index build: discover → crawl → chunk+embed. Overnight-safe.
 
-Usage (from the repo root, with .env holding GEMINI_API_KEY + NEON_URL):
+Embeddings run locally on CPU (no API key needed); only NEON_URL is required.
+Usage (from the repo root, with .env holding NEON_URL):
 
     python scripts/build_index.py                 # full pipeline
     python scripts/build_index.py --skip-crawl    # re-embed existing snapshot only

@@ -65,3 +65,35 @@ def test_parse_sitemap():
     urls = parse_sitemap(xml)
     assert len(urls) == 2
     assert urls[0].endswith("intro.html")
+
+
+def test_parse_sitemap_ignores_nested_image_loc():
+    # an <image:loc> nested under <url> must not be mistaken for a page URL
+    xml = """<?xml version="1.0"?>
+    <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+            xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
+      <url>
+        <loc>https://docs.pytorch.org/tutorials/intro.html</loc>
+        <image:image><image:loc>https://docs.pytorch.org/_static/diagram.png</image:loc></image:image>
+      </url>
+    </urlset>"""
+    urls = parse_sitemap(xml)
+    assert urls == ["https://docs.pytorch.org/tutorials/intro.html"]
+
+
+def test_sitemap_index_is_followed(monkeypatch):
+    # a <sitemapindex> points at child sitemaps; discover must fetch them, not
+    # treat the .xml sub-sitemap URLs as pages (which would drop every real page)
+    from ingest import discover as disc
+
+    index_xml = """<?xml version="1.0"?>
+    <sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+      <sitemap><loc>https://docs.pytorch.org/tutorials/sitemap-a.xml</loc></sitemap>
+    </sitemapindex>"""
+    child_xml = """<?xml version="1.0"?>
+    <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+      <url><loc>https://docs.pytorch.org/tutorials/real-page.html</loc></url>
+    </urlset>"""
+    monkeypatch.setattr(disc, "fetch", lambda url: child_xml.encode())
+    pages = disc._sitemap_pages("https://docs.pytorch.org/tutorials/", index_xml)
+    assert pages == {"https://docs.pytorch.org/tutorials/real-page.html"}

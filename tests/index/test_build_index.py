@@ -1,0 +1,100 @@
+"""build_index — the resumable embed/upsert/purge pass, with a fake connection.
+
+No live Postgres or embedding model: connect()/ensure_schema/get_meta/set_meta
+and iter_corpus_units are faked, and embed_fn is injected. The behaviour worth
+pinning is the stale-chunk purge — especially that a recipe bump (which forces
+a full re-embed) still purges deleted chunks, the bug this test guards.
+"""
+
+import index.db as db
+import index.embed as embed
+from index.embed import EMBED_RECIPE, build_index, chunk_key
+
+
+def _unit(url, chash="h1"):
+    return {
+        "url": url, "anchor": "", "heading_path": ["Section"], "page_title": "T",
+        "library": "core", "kind": "api", "source_link": "", "content_hash": chash,
+        "content": "body text",
+    }
+
+
+class _Result:
+    def __init__(self, conn, sql, params):
+        self.conn, self.sql = conn, sql
+        if sql.strip().lower().startswith("delete"):
+            conn.deleted.extend(params[0])
+
+    def fetchall(self):
+        return self.conn.db_rows if "select chunk_key" in self.sql else []
+
+    def fetchone(self):
+        return (self.conn.count,) if "count(*)" in self.sql else None
+
+
+class _CursorCtx:
+    def __init__(self, conn):
+        self.conn = conn
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def execute(self, sql, params=None):
+        self.conn.upserts.append(params)
+
+
+class FakeConn:
+    def __init__(self, db_rows):
+        self.db_rows = list(db_rows)
+        self.count = len(db_rows)
+        self.deleted: list[str] = []
+        self.upserts: list = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def execute(self, sql, params=None):
+        return _Result(self, sql, params)
+
+    def cursor(self):
+        return _CursorCtx(self)
+
+    def commit(self):
+        pass
+
+
+def _patch(monkeypatch, conn, units, recipe):
+    monkeypatch.setattr(db, "connect", lambda: conn)
+    monkeypatch.setattr(db, "ensure_schema", lambda c: None)
+    monkeypatch.setattr(db, "get_meta", lambda c, k: recipe)
+    monkeypatch.setattr(db, "set_meta", lambda c, k, v: None)
+    monkeypatch.setattr(embed, "iter_corpus_units", lambda corpus_dir=None: iter(units))
+
+
+def test_recipe_change_still_purges_stale_chunks(monkeypatch):
+    live = _unit("https://docs.pytorch.org/docs/stable/a.html")
+    conn = FakeConn([(chunk_key(live), "h1"), ("STALE_KEY", "hX")])
+    _patch(monkeypatch, conn, [live], recipe="old-recipe")  # != EMBED_RECIPE → full re-embed
+
+    result = build_index("v1", embed_fn=lambda texts: [[0.0, 0.0]] * len(texts))
+
+    assert "STALE_KEY" in conn.deleted  # regression: purge must run even on a recipe bump
+    assert conn.upserts  # recipe change re-embeds the live chunk
+    assert result["snapshot_chunks"] == 1
+
+
+def test_unchanged_chunk_not_reembedded_and_stale_purged(monkeypatch):
+    live = _unit("https://docs.pytorch.org/docs/stable/a.html")
+    conn = FakeConn([(chunk_key(live), "h1"), ("STALE_KEY", "hX")])
+    _patch(monkeypatch, conn, [live], recipe=EMBED_RECIPE)  # same recipe → incremental
+
+    build_index("v1", embed_fn=lambda texts: [[0.0, 0.0]] * len(texts))
+
+    assert conn.upserts == []  # live chunk unchanged (same hash) → nothing re-embedded
+    assert "STALE_KEY" in conn.deleted

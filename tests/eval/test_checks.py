@@ -60,3 +60,26 @@ def test_untagged_fence_not_parsed_as_python():
         update={"answer_md": "```\ndata/train/\n    class1/\n        img1.jpg\n```"}
     )
     assert run_checks(ok)["parses"] is None
+
+
+def test_symbol_not_matched_as_substring_of_prose():
+    # regression: `nn.Linear` must not be "present" just because the English
+    # word "linear" appears; word-boundary matching, not substring
+    bad = GOOD.model_copy(
+        update={
+            "answer_md": "SGD applies a linear update to the parameters.",
+            "symbols_used": ["torch.nn.Linear"],
+        }
+    )
+    assert "torch.nn.Linear" in run_checks(bad)["symbols"]
+
+
+def test_capitalised_python_fence_still_checked_for_imports():
+    # a bad import must not hide behind a ```Python (capital P) tag
+    bad = GOOD.model_copy(update={"answer_md": "```Python\nimport requests\n```"})
+    assert "requests" in run_checks(bad)["imports"]
+
+
+def test_relative_import_is_disallowed():
+    bad = GOOD.model_copy(update={"answer_md": "```python\nfrom . import utils\n```"})
+    assert "relative" in run_checks(bad)["imports"]

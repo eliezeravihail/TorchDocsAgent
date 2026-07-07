@@ -16,8 +16,13 @@ import textwrap
 from agent.schemas import Answer
 
 # only explicitly-tagged python blocks: untagged fences are often directory
-# trees, shell output, or prose that must not be parsed as code
-CODE_BLOCK_RE = re.compile(r"```(?:python|py)\s*\n(.*?)```", re.DOTALL)
+# trees, shell output, or prose that must not be parsed as code. Case-insensitive
+# and accept python/py/python3 (``` Python ```, ``` py3 ``` all count) so a bad
+# import can't hide behind a capitalised tag. `pycon` is intentionally excluded:
+# console sessions carry >>> prompts and output that never ast.parse.
+CODE_BLOCK_RE = re.compile(
+    r"```[ \t]*(?:python3?|py)[ \t]*\r?\n(.*?)```", re.DOTALL | re.IGNORECASE
+)
 
 ALLOWED_IMPORT_ROOTS = frozenset(sys.stdlib_module_names) | {
     "torch",
@@ -50,8 +55,11 @@ def check_imports_allowed(answer: Answer) -> str | None:
             roots: list[str] = []
             if isinstance(node, ast.Import):
                 roots = [alias.name.split(".")[0] for alias in node.names]
-            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-                roots = [node.module.split(".")[0]]
+            elif isinstance(node, ast.ImportFrom):
+                if node.level > 0:  # `from . import x` — never valid in a docs answer
+                    return f"disallowed import: relative '{'.' * node.level}{node.module or ''}'"
+                if node.module:
+                    roots = [node.module.split(".")[0]]
             for root in roots:
                 if root not in ALLOWED_IMPORT_ROOTS:
                     return f"disallowed import: {root}"
@@ -71,8 +79,13 @@ def _symbol_present(symbol: str, answer_md: str) -> bool:
         candidates.add(symbol.removeprefix("torch."))
     if len(parts) >= 2:
         candidates.add(".".join(parts[-2:]))
-    candidates.add(parts[-1])
-    return any(c in answer_md for c in candidates)
+    # a bare last component is only accepted if it's distinctive: short tails
+    # (torch.T, ...functional.F) would substring-match almost any prose
+    if len(parts[-1]) >= 3:
+        candidates.add(parts[-1])
+    # word-boundary match so `torch.relu` isn't "found" inside `prelu` and
+    # `nn.Linear` isn't satisfied by the English word "linear"
+    return any(re.search(rf"\b{re.escape(c)}\b", answer_md) for c in candidates)
 
 
 def check_symbols_present(answer: Answer) -> str | None:

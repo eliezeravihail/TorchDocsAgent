@@ -3,8 +3,8 @@
 A chunk = one coherent doc section: its heading path, its prose, and any code
 blocks that live under it. API pages also carry their [source] GitHub link as
 metadata. Units are emitted as OKF files (YAML frontmatter + markdown body) —
-the human/agent-readable knowledge snapshot — before M2's embed step loads
-them into Neon.
+the human/agent-readable knowledge snapshot — which the embed step then loads
+into Neon.
 """
 
 from __future__ import annotations
@@ -111,12 +111,15 @@ def chunk_page(meta: dict, body: str) -> list[dict]:
 def write_units(units: list[dict], out_dir: Path) -> list[Path]:
     """Write each unit as an OKF file: YAML frontmatter over the section body."""
     out_dir.mkdir(parents=True, exist_ok=True)
-    paths = []
+    paths: list[Path] = []
     for i, unit in enumerate(units):
         frontmatter = {k: v for k, v in unit.items() if k != "content"}
-        stem = slugify(f"{Path(unit['url']).stem}-{unit['anchor'] or i}")
+        # always suffix with the enumerate index: two sections on one page can
+        # slugify to the same anchor (e.g. two "Parameters" headings) and would
+        # otherwise clobber each other on disk, silently losing a section
+        stem = slugify(f"{Path(unit['url']).stem}-{unit['anchor'] or 'sec'}-{i}")
         path = out_dir / f"{stem}.md"
         frontmatter_yaml = yaml.safe_dump(frontmatter, sort_keys=True)
-        path.write_text(f"---\n{frontmatter_yaml}---\n\n{unit['content']}\n")
+        path.write_text(f"---\n{frontmatter_yaml}---\n\n{unit['content']}\n", encoding="utf-8")
         paths.append(path)
     return paths

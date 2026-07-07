@@ -1,9 +1,9 @@
-"""Grounded answering: retrieve → hydrate → answer with citations (M2 wiring).
+"""Grounded answering: retrieve → hydrate → answer with citations.
 
-This is the single-shot version — one retrieval pass per question. The M3
-agent loop replaces the fixed pass with tool calls, but the grounding
-contract (context-only answers, exact citations, honest referrals) is
-identical.
+This is the single-shot path — one retrieval pass per question. The agent
+loop (agent/loop.py) replaces the fixed pass with tool calls, but the
+grounding contract (context-only answers, exact citations, honest referrals)
+is identical, and both end in answer_from_sections below.
 """
 
 from __future__ import annotations
@@ -24,8 +24,25 @@ GROUNDED_SYSTEM = (
     "markdown with short illustrative snippets where helpful."
 )
 
+# Per-section context budget. A whole page can be far larger than one answer
+# needs, and every section shares the prompt, so we cap each one — but the cut
+# is made VISIBLE (marker + log) so the model can referral out instead of
+# silently answering from a truncated view.
 SECTION_CHAR_LIMIT = 2500
 SEARCH_URL = "https://docs.pytorch.org/docs/stable/search.html?q="
+
+
+def _section_body(section: dict) -> str:
+    content = section.get("content", "")
+    if len(content) <= SECTION_CHAR_LIMIT:
+        return content
+    print(
+        f"[grounded] section {section.get('url', '')} truncated for context "
+        f"({len(content)} → {SECTION_CHAR_LIMIT} chars)",
+        flush=True,
+    )
+    marker = "\n… [section truncated — see the source URL for the rest]"
+    return content[:SECTION_CHAR_LIMIT] + marker
 
 
 def build_context(sections: list[dict]) -> str:
@@ -33,9 +50,9 @@ def build_context(sections: list[dict]) -> str:
     for i, section in enumerate(sections, start=1):
         blocks.append(
             f"[{i}] TITLE: {section.get('heading_path', '')}\n"
-            f"URL: {section['url']}\n"
+            f"URL: {section.get('url', '')}\n"
             f"ANCHOR: {section.get('anchor', '')}\n"
-            f"{section['content'][:SECTION_CHAR_LIMIT]}"
+            f"{_section_body(section)}"
         )
     return "\n\n---\n\n".join(blocks)
 
@@ -60,10 +77,10 @@ def _regenerate_if_checks_fail(
 ) -> Answer:
     """Run the static checks (parses / imports / symbols); one repair round.
 
-    This is the live-path wiring of eval/checks.py the plan (M3.2) called for:
-    if a code block doesn't parse, an import is off-family, or a listed symbol
-    is missing from the prose, re-ask once with the reasons. Keep the repair
-    only if it is actually cleaner; never block the user on a failed check.
+    This wires eval/checks.py into the live answer path: if a code block
+    doesn't parse, an import is off-family, or a listed symbol is missing from
+    the prose, re-ask once with the reasons. Keep the repair only if it is
+    actually cleaner; never block the user on a failed check.
     """
     from eval.checks import run_checks
 

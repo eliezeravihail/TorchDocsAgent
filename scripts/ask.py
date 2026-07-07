@@ -1,4 +1,4 @@
-"""Ask the agent one question, end to end (M3 loop).
+"""Ask the agent one question, end to end (runs the agent tool loop).
 
     python scripts/ask.py "how do I build a CNN to classify images?"
     python scripts/ask.py "how is conv2d implemented?"
