@@ -5,21 +5,10 @@ description = "AI-powered chat agent for PyTorch documentation and code"
 requires-python = ">=3.11"
 readme = "README.md"
 license = { text = "MIT" }
-dependencies = [
-    "pydantic>=2",
-    "python-dotenv>=1",
-    "psycopg[binary]>=3.1",
-    "anthropic>=0.40",
-    "google-genai>=1",
-    "openai>=1.50",
-    "sentence-transformers>=3",
-    "langgraph>=0.2",
-    "requests>=2.31",
-    "beautifulsoup4>=4.12",
-    "markdownify>=0.13",
-    "PyYAML>=6",
-    "gradio>=4",
-]
+# Runtime deps live in requirements.txt (the single source), read in below via
+# dynamic metadata — HF Spaces installs that file directly, and `pip install .`
+# / `-e .` picks up the same list. One file, no drift.
+dynamic = ["dependencies"]
 
 [project.optional-dependencies]
 dev = [
@@ -31,6 +20,9 @@ dev = [
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
 
 [tool.setuptools.packages.find]
 include = ["ingest*", "index*", "agent*", "eval*", "app*"]
