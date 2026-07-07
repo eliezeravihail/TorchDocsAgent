@@ -58,6 +58,47 @@ class GenerationError(RuntimeError):
     """The model could not produce a schema-valid answer."""
 
 
+# --- cooldowns: a process-wide circuit breaker --------------------------------
+
+# A model/provider that just failed is skipped by OTHER calls for a short
+# window instead of being re-tried (and slept on) from scratch. One question
+# makes ~13 LLM calls (translation + planner steps + answer + repair), and the
+# app serves many questions concurrently — without shared state, every one of
+# those calls hammers the same rate-limited model first and pays the full
+# retry+sleep cost before falling through. Entries expire on their own; if
+# EVERYTHING is cooling down we try anyway rather than refuse to answer.
+_COOLDOWN_LOCK = threading.Lock()
+_COOLDOWNS: dict[str, float] = {}  # "model:x" / "provider:x" → monotonic deadline
+
+MODEL_COOLDOWN_429 = 60.0  # free-tier rate-limit windows are about a minute
+MODEL_COOLDOWN_404 = 3600.0  # retired/renamed slug — pointless to re-try soon
+PROVIDER_COOLDOWN = 60.0
+COOLDOWN_MAX = 900.0  # never honor a server-suggested wait beyond 15 minutes
+RETRY_AFTER_SLEEP_CAP = 30.0  # sleep at most this long; longer → cool down, next model
+
+
+def _set_cooldown(key: str, seconds: float) -> None:
+    with _COOLDOWN_LOCK:
+        _COOLDOWNS[key] = time.monotonic() + min(seconds, COOLDOWN_MAX)
+
+
+def _skip_cooling(items: list[str], kind: str) -> list[str]:
+    """Drop items in an active cooldown — unless that would leave nothing."""
+    now = time.monotonic()
+    with _COOLDOWN_LOCK:
+        hot = [i for i in items if _COOLDOWNS.get(f"{kind}:{i}", 0.0) <= now]
+    if hot and hot != items:
+        skipped = ", ".join(i for i in items if i not in hot)
+        print(f"[llm] skipping cooling-down {kind}(s): {skipped}", flush=True)
+    return hot or items  # everything cooling → try anyway rather than give up
+
+
+def reset_cooldowns() -> None:
+    """Clear the circuit-breaker state (used by tests)."""
+    with _COOLDOWN_LOCK:
+        _COOLDOWNS.clear()
+
+
 def _gemini_key() -> str | None:
     """Gemini key under any of the common secret names.
 
@@ -147,13 +188,17 @@ def answer_question(
     if client is not None:  # explicit client → single provider, no fallback
         return _dispatch(provider, question, system, client, retries, timeout)
 
-    chain = _provider_chain(provider)
+    chain = _skip_cooling(_provider_chain(provider), "provider")
     last_exc: Exception | None = None
     for i, p in enumerate(chain):
         try:
-            return _dispatch(p, question, system, None, retries, timeout)
+            answer = _dispatch(p, question, system, None, retries, timeout)
+            if i > 0:  # make silent quality drift visible: who actually answered?
+                print(f"[llm] answered by fallback provider {p}", flush=True)
+            return answer
         except Exception as exc:  # noqa: BLE001 — resilience across providers
             last_exc = exc
+            _set_cooldown(f"provider:{p}", PROVIDER_COOLDOWN)
             nxt = f"; falling back to {chain[i + 1]}" if i + 1 < len(chain) else ""
             print(f"[llm] provider {p} failed ({type(exc).__name__}: {exc}){nxt}", flush=True)
     raise GenerationError(f"all providers failed ({', '.join(chain)}): {last_exc}")
@@ -176,7 +221,7 @@ def _raw_completion(
     """
     provider = provider or default_provider()
     if client is None:
-        chain = _provider_chain(provider)
+        chain = _skip_cooling(_provider_chain(provider), "provider")
         last_exc: Exception | None = None
         for i, p in enumerate(chain):
             try:
@@ -185,6 +230,7 @@ def _raw_completion(
                 )
             except Exception as exc:  # noqa: BLE001 — resilience across providers
                 last_exc = exc
+                _set_cooldown(f"provider:{p}", PROVIDER_COOLDOWN)
                 if i + 1 < len(chain):
                     print(f"[llm] raw provider {p} failed; trying {chain[i + 1]}", flush=True)
         raise GenerationError(f"raw completion failed across all providers: {last_exc}")
@@ -301,16 +347,18 @@ def _compat_complete(client, messages, *, retries: int = 3, json_mode: bool = Fa
     """
     import openai
 
-    models = _compat_models()
+    models = _skip_cooling(_compat_models(), "model")
     last_exc: Exception | None = None
     for model in models:  # fallback chain across configured models
         for attempt in range(retries):
             kwargs = {"response_format": {"type": "json_object"}} if json_mode else {}
             try:
-                return (
-                    client.chat.completions.create(model=model, messages=messages, **kwargs),
-                    json_mode,
+                response = client.chat.completions.create(
+                    model=model, messages=messages, **kwargs
                 )
+                if model != models[0]:  # visibility: a fallback model answered
+                    print(f"[llm] answered by fallback model {model}", flush=True)
+                return response, json_mode
             except openai.APIError as exc:
                 last_exc = exc
                 # a bare "Connection error." hides the real reason (DNS, TLS,
@@ -320,21 +368,32 @@ def _compat_complete(client, messages, *, retries: int = 3, json_mode: bool = Fa
                 print(f"[llm] {model} error: {type(exc).__name__}: {exc}{detail}", flush=True)
                 status = getattr(exc, "status_code", None)
                 if status == 404:  # slug retired / now paid → skip to the next model
+                    _set_cooldown(f"model:{model}", MODEL_COOLDOWN_404)
                     print(f"[llm] {model} unavailable (404); trying next model")
                     break
                 if json_mode and status in (400, 422):
                     json_mode = False  # host rejected JSON mode — prompt+repair covers it
                     continue
-                if status == 429 and attempt == retries - 1:
-                    print(f"[llm] {model} rate-limited; trying next model")
-                    break  # exhausted this model → next in the chain
                 if status == 429:
-                    # Honor the server's Retry-After when it gives one; otherwise
-                    # widen the window each attempt. Add jitter so a burst of
-                    # requests that all hit 429 in the same second don't retry in
-                    # lockstep and trip the limit together again.
-                    base = _retry_after_seconds(exc)
-                    base = base if base is not None else 20 * (attempt + 1)
+                    retry_after = _retry_after_seconds(exc)
+                    # Give up on this model — and record a cooldown so other
+                    # in-flight calls skip it — when retries are exhausted or
+                    # the server asks for a longer wait than we're willing to
+                    # hold a worker thread for (e.g. a daily-quota Retry-After
+                    # of an hour must not put a request to sleep for an hour).
+                    if attempt == retries - 1 or (
+                        retry_after is not None and retry_after > RETRY_AFTER_SLEEP_CAP
+                    ):
+                        _set_cooldown(
+                            f"model:{model}",
+                            retry_after if retry_after is not None else MODEL_COOLDOWN_429,
+                        )
+                        print(f"[llm] {model} rate-limited; trying next model")
+                        break  # exhausted this model → next in the chain
+                    # Honor a short Retry-After; otherwise widen the window each
+                    # attempt. Jitter keeps a burst of requests that all hit 429
+                    # in the same second from retrying in lockstep.
+                    base = retry_after if retry_after is not None else 20 * (attempt + 1)
                     time.sleep(base + random.uniform(0, 1.5))
                 else:
                     time.sleep(2**attempt)

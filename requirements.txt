@@ -9,6 +9,7 @@ anthropic>=0.40
 google-genai>=1
 openai>=1.50
 sentence-transformers>=3
+transformers>=4.44
 langgraph>=0.2
 requests>=2.31
 beautifulsoup4>=4.12

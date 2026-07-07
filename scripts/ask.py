@@ -18,6 +18,13 @@ def main() -> int:
     args = parser.parse_args()
 
     load_dotenv()
+    from agent.guard import guard
+
+    verdict = guard(args.question)  # vet the user input once, before the pipeline
+    if not verdict.ok:
+        print(f"[guard] {verdict.reason}: {verdict.message}")
+        return 0
+
     from agent.loop import answer_agentic
 
     answer = answer_agentic(args.question)
