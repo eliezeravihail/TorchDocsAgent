@@ -35,12 +35,22 @@ import time
 from collections.abc import Callable
 from typing import NamedTuple
 
-# Default is a small NON-GATED injection classifier, so a fresh deploy with no
-# HF token still gets a working injection check instead of a silent no-op.
-# Meta's multilingual Llama-Prompt-Guard-2-22M is a good alternative but is
-# GATED — accept its license on Hugging Face and give the Space an HF token
-# before pointing TORCHDOCS_PROMPTGUARD_MODEL at it.
-DEFAULT_PROMPTGUARD_MODEL = "protectai/deberta-v3-base-prompt-injection-v2"
+# Comma-separated fallback chain, same pattern as the LLM model chain. The app
+# is multilingual BY DESIGN (questions arrive in any language), so the
+# multilingual classifier comes first: Meta's Llama-Prompt-Guard-2-22M — tiny
+# (~45MB) but GATED, so it needs a one-time license acceptance on Hugging Face
+# plus an HF_TOKEN secret on the Space. When it can't load (no token yet), the
+# chain falls back to the non-gated English-only protectai model rather than
+# running with no injection check at all.
+DEFAULT_PROMPTGUARD_MODELS = (
+    "meta-llama/Llama-Prompt-Guard-2-22M,"
+    "protectai/deberta-v3-base-prompt-injection-v2"
+)
+
+
+def _promptguard_models() -> list[str]:
+    raw = os.environ.get("TORCHDOCS_PROMPTGUARD_MODEL", DEFAULT_PROMPTGUARD_MODELS)
+    return [m.strip() for m in raw.split(",") if m.strip()]
 
 # cosine distance (pgvector <=>, 0=identical..2=opposite). A question whose
 # nearest doc chunk is farther than this is treated as off-topic. CONSERVATIVE
@@ -110,7 +120,12 @@ def _build_pipeline(model: str):
 
 
 def _classifier():
-    """The injection classifier, or None while a failed load is cooling down."""
+    """The first loadable classifier in the chain, or None while cooling down.
+
+    The chain exists for the gated-model case: the preferred multilingual
+    classifier needs a license + HF token, and a deploy that lacks them should
+    degrade to the open English-only model — not to no injection check at all.
+    """
     global _CLF, _CLF_RETRY_AT
     if _CLF is not None:
         return _CLF
@@ -120,19 +135,21 @@ def _classifier():
         now = time.monotonic()
         if now < _CLF_RETRY_AT:
             return None
-        model = os.environ.get("TORCHDOCS_PROMPTGUARD_MODEL", DEFAULT_PROMPTGUARD_MODEL)
-        try:
-            print(f"[guard] loading injection classifier {model} (CPU)", flush=True)
-            _CLF = _build_pipeline(model)
-        except Exception as exc:  # noqa: BLE001 — fail-open, but loudly and once per cooldown
-            _CLF_RETRY_AT = now + CLF_RETRY_SECONDS
-            print(
-                f"[guard] injection classifier failed to load ({exc}); "
-                f"injection check DISABLED for {int(CLF_RETRY_SECONDS)}s",
-                flush=True,
-            )
-            return None
-    return _CLF
+        models = _promptguard_models()
+        for model in models:  # fallback chain: multilingual first, non-gated second
+            try:
+                print(f"[guard] loading injection classifier {model} (CPU)", flush=True)
+                _CLF = _build_pipeline(model)
+                return _CLF
+            except Exception as exc:  # noqa: BLE001 — try the next model in the chain
+                print(f"[guard] classifier {model} failed to load ({exc})", flush=True)
+        _CLF_RETRY_AT = now + CLF_RETRY_SECONDS
+        print(
+            f"[guard] no injection classifier could load (tried {len(models)}); "
+            f"injection check DISABLED for {int(CLF_RETRY_SECONDS)}s",
+            flush=True,
+        )
+        return None
 
 
 # labels the various models use for "not an attack"; anything else = attack
