@@ -1,0 +1,15 @@
+{"id": "q01", "expected": [["generated/torch.optim.sgd"]]}
+{"id": "q02", "expected": [["generated/torch.nn.dropout"]]}
+{"id": "q03", "expected": [["dataloader", "torch.utils.data"]]}
+{"id": "q04", "expected": [["torch.no_grad"], ["inference_mode"]]}
+{"id": "q05", "expected": [["lr_scheduler"]]}
+{"id": "q06", "expected": [["crossentropyloss", "nllloss"]]}
+{"id": "q07", "expected": [["vision/stable/datasets", "torchvision.datasets"]]}
+{"id": "q08", "expected": [["cifar10", "transfer_learning", "beginner"]]}
+{"id": "q09", "expected": [["/audio/"]]}
+{"id": "q10", "expected": [["transfer_learning", "finetun"]]}
+{"id": "q11", "expected": [["saving_loading", "checkpoint"]]}
+{"id": "q12", "expected": [["conv2d"]]}
+{"id": "q13", "expected": [["sgd"]]}
+{"id": "q14", "expected": []}
+{"id": "q15", "expected": []}
