@@ -1,29 +1,26 @@
-"""requirements.txt must delegate to pyproject, not duplicate the dep list.
+"""requirements.txt must equal the list generated from pyproject.
 
-HF Spaces installs from requirements.txt while everything else installs from
-pyproject. Keeping a second hand-maintained list here is what once silently
-dropped google-genai and broke the live Space. The fix is a single source of
-truth: requirements.txt contains only "." (install this project), so pip pulls
-the deps straight from pyproject. This test fails if a package list creeps back.
+pyproject [project.dependencies] is the single source of truth; requirements.txt
+is a generated mirror (HF Spaces installs it and needs the explicit list — a
+bare "." fails the Space build with BUILD_ERROR). This fails CI if someone edits
+pyproject without regenerating, so the two can't drift and the deploy can't
+silently lose a package (which is exactly how the Space lost google-genai).
 """
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "scripts"))
 
 
-def _requirement_lines() -> set[str]:
-    lines = (ROOT / "requirements.txt").read_text().splitlines()
-    return {ln.strip() for ln in lines if ln.strip() and not ln.lstrip().startswith("#")}
+def test_requirements_txt_is_generated_from_pyproject():
+    from gen_requirements import render
 
-
-def test_requirements_delegates_to_pyproject():
-    lines = _requirement_lines()
-    extra = lines - {".", "-e ."}
-    assert lines, "requirements.txt must install the project (expected '.')"
-    assert not extra, (
-        "requirements.txt must only install this project ('.') so pyproject.toml "
-        f"stays the single source of dependency truth; found hardcoded deps: {sorted(extra)}"
+    current = (ROOT / "requirements.txt").read_text()
+    assert current == render(), (
+        "requirements.txt is out of sync with pyproject.toml dependencies — "
+        "run `python scripts/gen_requirements.py` and commit the result."
     )
