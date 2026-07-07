@@ -83,8 +83,9 @@ def get_pool():
         min_size=1,
         max_size=max_size,
         check=ConnectionPool.check_connection,
-        open=True,
+        open=False,  # constructor-time open is deprecated in psycopg_pool 3.2
     )
+    pool.open()
     return pool
 
 

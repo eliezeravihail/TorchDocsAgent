@@ -9,8 +9,17 @@ import concurrent.futures as cf
 import importlib
 import time
 
+import pytest
+
 from agent.schemas import Answer
 from app import main
+
+
+@pytest.fixture(autouse=True)
+def _disable_guard(monkeypatch):
+    # the guard would try to load a real classifier here (it is exercised in
+    # tests/agent/test_guard.py); keep these tests about concurrency only
+    monkeypatch.setenv("TORCHDOCS_GUARD", "0")
 
 
 class FakeDemo:
@@ -67,3 +76,10 @@ def test_respond_runs_in_parallel_without_state_bleed(monkeypatch):
         assert f"echo:{question}" in output
     # parallelism: 8 × 0.2s overlapped (~0.2s), nowhere near the 1.6s serial sum
     assert elapsed < 1.0
+
+
+def test_queue_is_bounded():
+    # backpressure: a flood gets "queue full" instead of an ever-growing line
+    demo = FakeDemo()
+    main.serve(demo)
+    assert demo.calls["queue"]["max_size"] == main.QUEUE_SIZE

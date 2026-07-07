@@ -18,7 +18,11 @@ Deploy:       Hugging Face Spaces (this file is the Space entrypoint).
 from __future__ import annotations
 
 import os
+import threading
+import time
+from collections import defaultdict, deque
 
+import gradio as gr
 from dotenv import load_dotenv
 
 from agent.loop import answer_agentic
@@ -48,6 +52,37 @@ LICENSE_NOTE = "<sub>[BSD-3-Clause](https://github.com/pytorch/pytorch/blob/main
 # CPU — overlapping them is what turns "wait your turn" into "answered now".
 # Override per deploy (a bigger Space, a paid LLM key) via the env var.
 CONCURRENCY = int(os.environ.get("TORCHDOCS_CONCURRENCY", "16"))
+
+# Backpressure: how many requests may WAIT behind the concurrent workers before
+# new ones are turned away. Without a cap the queue grows without bound under a
+# flood, and everyone in it waits forever instead of being told "busy".
+QUEUE_SIZE = int(os.environ.get("TORCHDOCS_QUEUE_SIZE", "64"))
+
+# Per-client throttle: at most RATE_LIMIT questions per RATE_WINDOW seconds per
+# client IP, so one over-eager caller can't occupy every worker slot (and burn
+# the shared free-tier LLM quota) by itself. 0 disables the throttle.
+RATE_LIMIT = int(os.environ.get("TORCHDOCS_RATE_LIMIT", "8"))
+RATE_WINDOW = float(os.environ.get("TORCHDOCS_RATE_WINDOW_SECONDS", "60"))
+BUSY_NOTE = "You're asking faster than I can answer — give it a moment and try again."
+
+_RATE_LOCK = threading.Lock()
+_RATE_BUCKETS: dict[str, deque[float]] = defaultdict(deque)
+
+
+def _rate_limited(client_id: str) -> bool:
+    """Sliding window: True if this client already used its RATE_LIMIT slots."""
+    now = time.monotonic()
+    with _RATE_LOCK:
+        bucket = _RATE_BUCKETS[client_id]
+        while bucket and now - bucket[0] > RATE_WINDOW:
+            bucket.popleft()
+        if len(bucket) >= RATE_LIMIT:
+            return True
+        bucket.append(now)
+        if len(_RATE_BUCKETS) > 4096:  # keep one-off visitors from growing the table
+            for key in [k for k, b in _RATE_BUCKETS.items() if not b or now - b[-1] > RATE_WINDOW]:
+                del _RATE_BUCKETS[key]
+        return False
 
 
 def _warm_up() -> None:
@@ -86,10 +121,14 @@ def render(answer: Answer) -> str:
     return "\n".join(parts)
 
 
-def respond(question: str) -> str:
+def respond(question: str, request: gr.Request = None) -> str:
     question = (question or "").strip()
     if not question:
         return "Ask me something about PyTorch."
+    # gradio injects `request` for real traffic; direct calls (tests) skip it
+    client = getattr(getattr(request, "client", None), "host", None)
+    if client and RATE_LIMIT > 0 and _rate_limited(client):
+        return BUSY_NOTE
     from agent.guard import guard
 
     verdict = guard(question)  # one check on the raw user input, before the pipeline
@@ -98,12 +137,13 @@ def respond(question: str) -> str:
     try:
         return render(answer_agentic(question))
     except Exception as exc:  # noqa: BLE001 — never crash the UI
-        return f"Something went wrong answering that: `{exc}`. Please try again."
+        # the real error goes to the logs; the user gets a generic line, since
+        # an exception string can leak hosts, model slugs, and config internals
+        print(f"[app] answer failed: {type(exc).__name__}: {exc}", flush=True)
+        return "Something went wrong answering that. Please try again in a moment."
 
 
 def build_ui():
-    import gradio as gr
-
     with gr.Blocks(title="TorchDocs Agent") as demo:
         gr.Markdown(INTRO)
         question = gr.Textbox(
@@ -126,9 +166,11 @@ def serve(demo) -> None:
     event to a serial `concurrency_limit=1`, so without this each user waits for
     the previous answer to finish. `max_threads` is lifted in step so the worker
     pool — which also holds threads parked in retry back-off on a 429 — never
-    becomes the hidden ceiling below CONCURRENCY.
+    becomes the hidden ceiling below CONCURRENCY. `max_size` bounds how many
+    requests may wait behind them, so a flood gets "queue full" instead of an
+    ever-growing line.
     """
-    demo.queue(default_concurrency_limit=CONCURRENCY)
+    demo.queue(default_concurrency_limit=CONCURRENCY, max_size=QUEUE_SIZE)
     demo.launch(
         server_name="0.0.0.0",
         server_port=int(os.environ.get("PORT", 7860)),

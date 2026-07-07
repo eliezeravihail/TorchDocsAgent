@@ -72,9 +72,7 @@ def validate_citations(answer: Answer, sections: list[dict]) -> Answer:
     return answer.model_copy(update={"citations": kept})
 
 
-def _regenerate_if_checks_fail(
-    question: str, user: str, answer: Answer, provider, client
-) -> Answer:
+def _regenerate_if_checks_fail(user: str, answer: Answer, provider, client) -> Answer:
     """Run the static checks (parses / imports / symbols); one repair round.
 
     This wires eval/checks.py into the live answer path: if a code block
@@ -131,7 +129,7 @@ def answer_from_sections(
 
     user = f"{build_context(sections)}\n\n---\n\nQuestion: {question}"
     answer = answer_question(user, system=GROUNDED_SYSTEM, provider=provider, client=client)
-    answer = _regenerate_if_checks_fail(question, user, answer, provider, client)
+    answer = _regenerate_if_checks_fail(user, answer, provider, client)
     answer = validate_citations(answer, sections)
     if referrals:  # tool-loop referrals (e.g. ask_source) join any the model added
         answer = answer.model_copy(update={"referrals": answer.referrals + referrals})
