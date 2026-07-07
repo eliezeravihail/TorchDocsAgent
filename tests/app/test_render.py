@@ -21,8 +21,8 @@ def test_render_includes_answer_citations_referrals():
     assert "torch.optim.SGD.html#torch.optim.SGD" in md
     assert "**Beyond these docs**" in md
     assert "PyTorch 2.12" in md
-    # license/attribution note under the citations
-    assert "BSD-3-Clause" in md and "PyTorch Contributors" in md
+    # license link under the citations: text is the license name
+    assert "[BSD-3-Clause](https://github.com/pytorch/pytorch/blob/main/LICENSE)" in md
 
 
 def test_render_no_license_note_without_citations():

@@ -34,15 +34,8 @@ EXAMPLES = [
     "How is conv2d implemented under the hood?",
 ]
 
-# Shown under the citations: the answers quote the PyTorch docs/tutorials, so we
-# attribute the source and its license (both are BSD-3-Clause, © PyTorch
-# Contributors) and make clear this is an unofficial tool.
-LICENSE_NOTE = (
-    "<sub>Quoted from the [PyTorch documentation](https://docs.pytorch.org) and "
-    "[tutorials](https://github.com/pytorch/tutorials), © PyTorch Contributors, "
-    "licensed [BSD-3-Clause](https://github.com/pytorch/pytorch/blob/main/LICENSE). "
-    "Unofficial project — not affiliated with the PyTorch team.</sub>"
-)
+# Shown under the citations: a link to the PyTorch license, its name as the text.
+LICENSE_NOTE = "<sub>[BSD-3-Clause](https://github.com/pytorch/pytorch/blob/main/LICENSE)</sub>"
 
 
 def _warm_up() -> None:
