@@ -34,6 +34,16 @@ EXAMPLES = [
     "How is conv2d implemented under the hood?",
 ]
 
+# Shown under the citations: the answers quote the PyTorch docs/tutorials, so we
+# attribute the source and its license (both are BSD-3-Clause, © PyTorch
+# Contributors) and make clear this is an unofficial tool.
+LICENSE_NOTE = (
+    "<sub>Quoted from the [PyTorch documentation](https://docs.pytorch.org) and "
+    "[tutorials](https://github.com/pytorch/tutorials), © PyTorch Contributors, "
+    "licensed [BSD-3-Clause](https://github.com/pytorch/pytorch/blob/main/LICENSE). "
+    "Unofficial project — not affiliated with the PyTorch team.</sub>"
+)
+
 
 def _warm_up() -> None:
     """Load the embedding model once so the first question isn't slow."""
@@ -60,6 +70,8 @@ def render(answer: Answer) -> str:
             parts.append(f"- [{r.reason or r.url}]({r.url})")
     if answer.torch_version and answer.torch_version != "unknown":
         parts.append(f"\n<sub>targets PyTorch {answer.torch_version}</sub>")
+    if answer.citations:  # only when we actually quoted documentation
+        parts.append("\n" + LICENSE_NOTE)
     return "\n".join(parts)
 
 
