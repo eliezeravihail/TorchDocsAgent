@@ -90,3 +90,38 @@ def test_threshold_is_configurable(monkeypatch):
     # score 0.8 is below the raised threshold → allowed
     v = guard("borderline", injection_score_fn=lambda q: 0.8, distance_fn=lambda q: ONTOPIC)
     assert v.ok
+
+
+def test_non_english_question_skips_topicality():
+    # the embedder is English-only, so a legitimate Hebrew question would always
+    # look "far" — topicality must not false-block the multilingual feature
+    v = guard(
+        "איזה סקדולרים נתמכים בטורץ'?",
+        injection_score_fn=lambda q: 0.0,
+        distance_fn=lambda q: OFFTOPIC,
+    )
+    assert v.ok
+
+
+def test_failed_classifier_load_is_cached_not_retried_per_question(monkeypatch):
+    import agent.guard as guard_mod
+
+    loads = {"n": 0}
+
+    def boom(model):
+        loads["n"] += 1
+        raise RuntimeError("gated model, no HF token")
+
+    monkeypatch.setattr(guard_mod, "_build_pipeline", boom)
+    # both questions are allowed (fail-open), but the load — a slow hub
+    # download attempt — happens once, not once per question
+    assert guard("how do I use SGD?", distance_fn=lambda q: ONTOPIC).ok
+    assert guard("how do I use a DataLoader?", distance_fn=lambda q: ONTOPIC).ok
+    assert loads["n"] == 1
+
+
+def test_malformed_env_threshold_falls_back_to_default(monkeypatch):
+    monkeypatch.setenv("TORCHDOCS_PROMPTGUARD_THRESHOLD", "not-a-number")
+    # score 0.6 ≥ default 0.5 → still blocked; the bad env var never crashes
+    v = guard("x", injection_score_fn=lambda q: 0.6, distance_fn=lambda q: ONTOPIC)
+    assert not v.ok and v.reason == "injection"

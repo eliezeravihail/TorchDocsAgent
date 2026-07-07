@@ -81,22 +81,22 @@ def top_distance(query: str, conn=None, embed_fn=None) -> float | None:
     off-topic — but an off-topic query's *nearest* chunk is still far. Returns
     None if the index is empty. pgvector `<=>` is cosine distance in [0, 2].
     """
-    from index.db import connect
+    from contextlib import nullcontext
+
+    from index.db import get_pool
     from index.embed import embed_query
 
     embed_fn = embed_fn or embed_query
-    own_conn = conn is None
-    if own_conn:
-        conn = connect()
-    try:
+    # Same pooled access as retrieve(): this runs on every guarded question, so
+    # a raw connect() here would pay a TLS handshake per request and hold
+    # connections outside the pool's cap.
+    ctx = nullcontext(conn) if conn is not None else get_pool().connection()
+    with ctx as conn:
         row = conn.execute(
             "select embedding <=> %(vector)s::vector as dist from chunks "
             "order by dist limit 1",
             {"vector": str(embed_fn(query))},
         ).fetchone()
-    finally:
-        if own_conn:
-            conn.close()
     return float(row[0]) if row else None
 
 
@@ -139,7 +139,11 @@ def retrieve(
         symbol_rows: list[tuple] = []
         symbol = extract_symbol(query)
         if symbol:
-            params["sym"] = f"%{symbol}%"
+            # escape ILIKE wildcards so a literal % or _ in the query matches
+            # itself instead of acting as a pattern (backslash is the default
+            # escape character in Postgres LIKE/ILIKE)
+            escaped = symbol.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
+            params["sym"] = f"%{escaped}%"
             symbol_rows = conn.execute(SYMBOL_SQL.format(extra=extra), params).fetchall()
 
     channels = [("dense", dense_rows), ("keyword", keyword_rows), ("symbol", symbol_rows)]

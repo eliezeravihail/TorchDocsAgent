@@ -79,7 +79,8 @@ def test_symbol_query_adds_third_channel_and_wins():
         "scaled_dot_product_attention", k=3, conn=conn, embed_fn=lambda q: [0.0] * 384
     )
     assert len(conn.queries) == 3  # dense + keyword + symbol
-    assert conn.queries[2][1]["sym"] == "%scaled_dot_product_attention%"
+    # ILIKE wildcards in the symbol are escaped: \_ matches a literal _
+    assert conn.queries[2][1]["sym"] == r"%scaled\_dot\_product\_attention%"
     assert "api" in [r["chunk_key"] for r in results]
 
 
