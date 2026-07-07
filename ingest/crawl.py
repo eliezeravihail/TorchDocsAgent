@@ -93,9 +93,18 @@ def crawl(
     pages: dict[str, set[str]],
     corpus_dir: Path = CORPUS_DIR,
 ) -> dict[str, int]:
-    """Fetch and snapshot every discovered page; returns per-library change counts."""
+    """Fetch and snapshot every discovered page; returns per-library change counts.
+
+    Politeness: a fixed delay between requests (TORCHDOCS_CRAWL_DELAY seconds,
+    default 0.2) keeps a thousands-page crawl from hammering docs.pytorch.org —
+    both to be a good citizen and to not get the CI runner's IP blocked.
+    """
+    import os
+    import time
+
     from ingest.discover import fetch
 
+    delay = float(os.environ.get("TORCHDOCS_CRAWL_DELAY", "0.2"))
     changed: dict[str, int] = {}
     for library, urls in pages.items():
         count = 0
@@ -105,6 +114,9 @@ def crawl(
             except Exception as exc:  # noqa: BLE001 — one bad page must not kill the crawl
                 print(f"[crawl] {url}: fetch failed ({exc})")
                 continue
+            finally:
+                if delay > 0:
+                    time.sleep(delay)
             if save_page(url, library, html, corpus_dir):
                 count += 1
         changed[library] = count

@@ -43,3 +43,18 @@ def test_save_page_roundtrip_and_hash_skip(tmp_path):
     assert save_page(URL, "core", HTML, tmp_path) is False
     # changed content → written again
     assert save_page(URL, "core", HTML.replace("0.01", "0.02"), tmp_path) is True
+
+
+def test_crawl_is_polite_between_requests(monkeypatch, tmp_path):
+    import time
+
+    import ingest.crawl as crawl_mod
+
+    monkeypatch.setenv("TORCHDOCS_CRAWL_DELAY", "0.5")
+    sleeps = []
+    monkeypatch.setattr(time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr(
+        "ingest.discover.fetch", lambda url: b"<html><body><p>hi</p></body></html>"
+    )
+    crawl_mod.crawl({"core": {"https://x/a.html", "https://x/b.html"}}, tmp_path)
+    assert sleeps == [0.5, 0.5]  # one pause after every request, failures included

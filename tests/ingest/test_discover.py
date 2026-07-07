@@ -97,3 +97,77 @@ def test_sitemap_index_is_followed(monkeypatch):
     monkeypatch.setattr(disc, "fetch", lambda url: child_xml.encode())
     pages = disc._sitemap_pages("https://docs.pytorch.org/tutorials/", index_xml)
     assert pages == {"https://docs.pytorch.org/tutorials/real-page.html"}
+
+
+# --- fetch hardening --------------------------------------------------------
+
+
+class _FakeResponse:
+    def __init__(self, status=200, chunks=(b"<html/>",)):
+        self.status_code = status
+        self._chunks = list(chunks)
+
+    def raise_for_status(self):
+        import requests
+
+        if self.status_code >= 400:
+            exc = requests.HTTPError(f"{self.status_code}")
+            exc.response = self
+            raise exc
+
+    def iter_content(self, size):
+        return iter(self._chunks)
+
+
+def _no_sleep(monkeypatch):
+    import time
+
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+
+
+def test_fetch_retries_transient_errors_then_succeeds(monkeypatch):
+    from ingest.discover import fetch
+
+    _no_sleep(monkeypatch)
+    responses = iter([_FakeResponse(status=503), _FakeResponse(status=429), _FakeResponse()])
+    calls = {"n": 0}
+
+    def fake_get(url, **kwargs):
+        calls["n"] += 1
+        return next(responses)
+
+    monkeypatch.setattr("requests.get", fake_get)
+    assert fetch("https://docs.pytorch.org/x.html") == b"<html/>"
+    assert calls["n"] == 3  # 503 → retry, 429 → retry, 200 → done
+
+
+def test_fetch_does_not_retry_permanent_4xx(monkeypatch):
+    import pytest
+    import requests
+
+    from ingest.discover import fetch
+
+    _no_sleep(monkeypatch)
+    calls = {"n": 0}
+
+    def fake_get(url, **kwargs):
+        calls["n"] += 1
+        return _FakeResponse(status=404)
+
+    monkeypatch.setattr("requests.get", fake_get)
+    with pytest.raises(requests.HTTPError):
+        fetch("https://docs.pytorch.org/gone.html")
+    assert calls["n"] == 1  # a 404 is permanent for a crawl — no pointless retries
+
+
+def test_fetch_abandons_oversized_pages_early(monkeypatch):
+    import pytest
+
+    import ingest.discover as disc
+
+    _no_sleep(monkeypatch)
+    monkeypatch.setattr(disc, "MAX_PAGE_BYTES", 100)
+    huge = _FakeResponse(chunks=[b"x" * 64, b"x" * 64, b"x" * 64])
+    monkeypatch.setattr("requests.get", lambda url, **kw: huge)
+    with pytest.raises(ValueError, match="exceeds"):
+        disc.fetch("https://docs.pytorch.org/huge.html")

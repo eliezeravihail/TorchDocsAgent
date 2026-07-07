@@ -91,12 +91,43 @@ def is_sitemap_index(xml_text: str) -> bool:
     return _localname(ET.fromstring(xml_text).tag) == "sitemapindex"
 
 
-def fetch(url: str, timeout: float = 30.0) -> bytes:
+FETCH_RETRIES = 3
+# a real doc page is tens of KB; anything near this is a mistake (a tarball
+# link, a runaway page) and would balloon memory across a thousands-page crawl
+MAX_PAGE_BYTES = 5 * 1024 * 1024
+
+
+def fetch(url: str, timeout: float = 30.0, retries: int = FETCH_RETRIES) -> bytes:
+    """GET with retry/backoff on transient failures and a hard size cap.
+
+    Retries cover network errors, 5xx, and 429; other 4xx (404, 403) are
+    permanent for a crawl and raise immediately. The size cap is enforced
+    while streaming, so a huge body is abandoned early, not after download.
+    """
+    import time
+
     import requests
 
-    response = requests.get(url, timeout=timeout, headers={"User-Agent": "torchdocs-agent"})
-    response.raise_for_status()
-    return response.content
+    last_exc: Exception | None = None
+    for attempt in range(retries):
+        try:
+            response = requests.get(
+                url, timeout=timeout, headers={"User-Agent": "torchdocs-agent"}, stream=True
+            )
+            response.raise_for_status()
+            body = b""
+            for chunk in response.iter_content(65536):
+                body += chunk
+                if len(body) > MAX_PAGE_BYTES:
+                    raise ValueError(f"{url}: page exceeds {MAX_PAGE_BYTES} bytes; skipping")
+            return body
+        except requests.RequestException as exc:
+            last_exc = exc
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            if status is not None and status < 500 and status != 429:
+                raise  # permanent for a crawl (404 gone, 403 blocked) — retrying won't help
+            time.sleep(2**attempt)
+    raise last_exc  # type: ignore[misc]  # loop ran ≥1 time, so last_exc is set
 
 
 def _sitemap_pages(base: str, xml_text: str) -> set[str]:
