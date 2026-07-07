@@ -240,3 +240,117 @@ def test_anthropic_no_tool_call_raises():
     client = FakeAnthropicClient([SimpleNamespace(content=[SimpleNamespace(type="text")])])
     with pytest.raises(GenerationError, match="no submit_answer"):
         answer_question("q", provider="anthropic", client=client)
+
+
+# --- cooldowns (the shared circuit breaker) -----------------------------------
+
+
+def _429(headers=None):
+    import openai
+
+    resp = SimpleNamespace(status_code=429, headers=headers or {}, request=SimpleNamespace())
+    return openai.RateLimitError("429", response=resp, body=None)
+
+
+def _ok_openai():
+    message = SimpleNamespace(content=Answer(**GOOD_PAYLOAD).model_dump_json())
+    return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+
+def test_rate_limited_model_is_skipped_by_the_next_call(monkeypatch):
+    # the point of the breaker: with ~13 LLM calls per question and many
+    # concurrent users, a 429'd model must not be re-tried (and slept on) by
+    # every subsequent call — the next call goes straight to the healthy model
+    monkeypatch.setenv("TORCHDOCS_OPENAI_COMPAT_MODEL", "model-a,model-b")
+    served = []
+
+    def create(**kwargs):
+        served.append(kwargs["model"])
+        if kwargs["model"] == "model-a":
+            raise _429()
+        return _ok_openai()
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    answer_question("q", provider="openai-compat", client=client, retries=1)
+    assert served == ["model-a", "model-b"]  # first call pays the discovery
+
+    served.clear()
+    answer_question("q", provider="openai-compat", client=client, retries=1)
+    assert served == ["model-b"]  # second call skips the cooling-down model
+
+
+def test_all_models_cooling_down_are_still_tried():
+    # the breaker reduces waste; it must never turn into "no models at all"
+    from agent.llm import _set_cooldown
+
+    _set_cooldown("model:deepseek/deepseek-chat-v3-0324:free", 60)
+    _set_cooldown("model:meta-llama/llama-3.3-70b-instruct:free", 60)
+    _set_cooldown("model:google/gemini-2.0-flash-exp:free", 60)
+    client = FakeOpenAIClient([Answer(**GOOD_PAYLOAD).model_dump_json()])
+    answer = answer_question("q", provider="openai-compat", client=client)
+    assert answer.answer_md == "Use SGD."
+
+
+def test_long_retry_after_moves_on_instead_of_sleeping(monkeypatch):
+    # a daily-quota Retry-After (e.g. an hour) must not park a worker thread —
+    # the model is cooled down and the next model answers immediately
+    import agent.llm as llm
+
+    monkeypatch.setenv("TORCHDOCS_OPENAI_COMPAT_MODEL", "model-a,model-b")
+    sleeps = []
+    monkeypatch.setattr(llm.time, "sleep", lambda s: sleeps.append(s))
+
+    def create(**kwargs):
+        if kwargs["model"] == "model-a":
+            raise _429(headers={"retry-after": "3600"})
+        return _ok_openai()
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    answer = answer_question("q", provider="openai-compat", client=client, retries=3)
+    assert answer.answer_md == "Use SGD."
+    assert sleeps == []
+
+
+def test_short_retry_after_is_honored_with_jitter(monkeypatch):
+    import agent.llm as llm
+
+    monkeypatch.setenv("TORCHDOCS_OPENAI_COMPAT_MODEL", "model-a")
+    sleeps = []
+    monkeypatch.setattr(llm.time, "sleep", lambda s: sleeps.append(s))
+    replies = iter([_429(headers={"retry-after": "5"}), _ok_openai()])
+
+    def create(**kwargs):
+        item = next(replies)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    answer_question("q", provider="openai-compat", client=client, retries=3)
+    assert len(sleeps) == 1
+    assert 5 <= sleeps[0] <= 6.5  # server's wait + up to 1.5s jitter
+
+
+def test_failed_provider_is_skipped_by_the_next_question(monkeypatch):
+    import agent.llm as llm
+
+    monkeypatch.setenv("OPENAI_COMPAT_API_KEY", "sk-x")
+    monkeypatch.setenv("GEMINI_API_KEY", "g-x")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("TORCHDOCS_PROVIDER", raising=False)
+
+    tried = []
+
+    def fake_dispatch(provider, question, system, client, retries, timeout):
+        tried.append(provider)
+        if provider == "openai-compat":
+            raise GenerationError("Connection error.")
+        return Answer(**GOOD_PAYLOAD)
+
+    monkeypatch.setattr(llm, "_dispatch", fake_dispatch)
+    answer_question("q")
+    assert tried == ["openai-compat", "gemini"]
+
+    tried.clear()
+    answer_question("q")
+    assert tried == ["gemini"]  # the broken provider is cooling down
