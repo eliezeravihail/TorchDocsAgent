@@ -26,7 +26,9 @@ import requests
 
 SPACE_ID = os.environ.get("SPACE_ID", "eliezeravihail/torchdocs-agent")
 HF_TOKEN = os.environ.get("HF_TOKEN") or None
-QUESTION = os.environ.get("SMOKE_QUESTION", "How do I use torch.optim.SGD with momentum?")
+# `or` (not a get default): the workflow always sets SMOKE_QUESTION, but it's
+# empty on the workflow_run trigger — an empty string must fall back too
+QUESTION = os.environ.get("SMOKE_QUESTION") or "How do I use torch.optim.SGD with momentum?"
 BUILD_TIMEOUT = int(os.environ.get("BUILD_TIMEOUT", "900"))
 POLL_EVERY = 15
 RUNTIME_URL = f"https://huggingface.co/api/spaces/{SPACE_ID}/runtime"
@@ -78,7 +80,17 @@ def ask_space() -> str:
     """Call the Space's /respond endpoint and return the answer text."""
     from gradio_client import Client
 
-    client = Client(SPACE_ID, hf_token=HF_TOKEN)
+    # the token kwarg was renamed across gradio_client versions (hf_token → token)
+    # and the Space is public anyway, so try the variants and fall back tokenless
+    client = None
+    for kw in ("token", "hf_token"):
+        try:
+            client = Client(SPACE_ID, **{kw: HF_TOKEN})
+            break
+        except TypeError:
+            continue
+    if client is None:
+        client = Client(SPACE_ID)
     result = client.predict(QUESTION, api_name="/respond")
     return result if isinstance(result, str) else str(result)
 
