@@ -1,5 +1,17 @@
-# Single source of dependency truth is pyproject.toml [project.dependencies].
-# HF Spaces installs from this file; the lone "." tells pip to install THIS
-# project, which pulls those deps in — so there is no second list to drift out
-# of sync (a missing google-genai here once silently broke the live Space).
-.
+# Single source of dependency truth for the whole project.
+# HF Spaces installs from this file; pyproject.toml reads the same list via
+# [tool.setuptools.dynamic], so `pip install -e .` (CI) and the Space stay in
+# sync with no second list to maintain.
+pydantic>=2
+python-dotenv>=1
+psycopg[binary]>=3.1
+anthropic>=0.40
+google-genai>=1
+openai>=1.50
+sentence-transformers>=3
+langgraph>=0.2
+requests>=2.31
+beautifulsoup4>=4.12
+markdownify>=0.13
+PyYAML>=6
+gradio>=4
