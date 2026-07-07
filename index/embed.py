@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import hashlib
 import os
+import threading
 from collections.abc import Iterator
-from functools import cache
 from pathlib import Path
 
 from ingest.chunk_docs import chunk_page
@@ -78,12 +78,25 @@ def batches(items: list, size: int = BATCH_SIZE) -> Iterator[list]:
         yield items[i : i + size]
 
 
-@cache
-def _model():
-    from sentence_transformers import SentenceTransformer
+_MODEL_LOCK = threading.Lock()
+_MODEL = None
 
-    print(f"[embed] loading {EMBED_MODEL} (first run downloads ~130MB)")
-    return SentenceTransformer(EMBED_MODEL, device="cpu")
+
+def _model():
+    # Double-checked load: functools.cache would let two concurrent first
+    # queries (before _warm_up finishes, or when it is skipped) both enter the
+    # body and load the 130MB model twice. Guard the build with a lock and a
+    # re-check so it happens exactly once; encode() itself is safe to call
+    # concurrently on the shared instance.
+    global _MODEL
+    if _MODEL is None:
+        with _MODEL_LOCK:
+            if _MODEL is None:
+                from sentence_transformers import SentenceTransformer
+
+                print(f"[embed] loading {EMBED_MODEL} (first run downloads ~130MB)")
+                _MODEL = SentenceTransformer(EMBED_MODEL, device="cpu")
+    return _MODEL
 
 
 def embed_texts(texts: list[str]) -> list[list[float]]:

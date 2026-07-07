@@ -2,11 +2,20 @@
 
 Pointer-based by design: no page text column. Content lives in the
 _corpus/ snapshot; the DB holds vectors, tsvectors, and pointers.
+
+Two ways to reach Neon, for two workloads:
+- `connect()` — one dedicated connection, for the batch index build (a single
+  long-running writer that commits in checkpoints).
+- `get_pool()` — a shared connection pool, for the web app, where many
+  concurrent questions each borrow a connection for a couple of quick reads.
+  Reconnecting per read (TLS handshake ~100-300ms) would dominate answer time
+  under load and risk exhausting Neon's free-tier connection cap.
 """
 
 from __future__ import annotations
 
 import os
+from functools import cache
 
 import psycopg
 
@@ -44,11 +53,39 @@ create table if not exists index_meta (
 """
 
 
-def connect() -> psycopg.Connection:
+def _neon_url() -> str:
     url = os.environ.get("NEON_URL")
     if not url:
         raise RuntimeError("NEON_URL is not set (see .env.example)")
-    return psycopg.connect(url)
+    return url
+
+
+def connect() -> psycopg.Connection:
+    return psycopg.connect(_neon_url())
+
+
+@cache
+def get_pool():
+    """Process-wide pooled access to Neon, built lazily on first use.
+
+    Cached so every request shares one pool. `max_size` caps concurrent DB
+    connections (keep it at or under Neon's plan limit); it need not equal the
+    app's request concurrency — a request holds a connection only for the brief
+    reads inside retrieve(), then returns it. `check` validates a connection on
+    checkout so a Neon-side idle timeout surfaces as a fresh connection, not a
+    query error mid-request.
+    """
+    from psycopg_pool import ConnectionPool
+
+    max_size = int(os.environ.get("TORCHDOCS_DB_POOL", "8"))
+    pool = ConnectionPool(
+        _neon_url(),
+        min_size=1,
+        max_size=max_size,
+        check=ConnectionPool.check_connection,
+        open=True,
+    )
+    return pool
 
 
 def get_meta(conn: psycopg.Connection, key: str) -> str | None:

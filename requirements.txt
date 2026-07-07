@@ -4,7 +4,7 @@
 # sync with no second list to maintain.
 pydantic>=2
 python-dotenv>=1
-psycopg[binary]>=3.1
+psycopg[binary,pool]>=3.1  # [pool] = psycopg_pool, the app's shared Neon pool
 anthropic>=0.40
 google-genai>=1
 openai>=1.50
