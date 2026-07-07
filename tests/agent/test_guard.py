@@ -109,6 +109,21 @@ def test_translation_failure_is_fail_open():
     assert v.ok
 
 
+def test_untranslated_fallback_skips_the_distance_check():
+    # translate_to_english degrades to the ORIGINAL text on an LLM outage (no
+    # exception). Calibration showed raw Hebrew lands at ~0.4+ — blocking range
+    # — so measuring it would false-block a legit question during an outage.
+    def measured(q):
+        raise AssertionError("distance must not be measured on untranslated text")
+
+    v = guard(
+        "איזה סקדולרים נתמכים בטורץ'?",
+        distance_fn=measured,
+        translate_fn=lambda q: q,  # fallback behavior: original returned as-is
+    )
+    assert v.ok
+
+
 def test_threshold_is_configurable(monkeypatch):
     monkeypatch.setenv("TORCHDOCS_TOPICALITY_MAX_DISTANCE", "0.99")
     # distance 0.95 is under the loosened threshold → allowed
