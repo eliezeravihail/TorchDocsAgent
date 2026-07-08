@@ -19,10 +19,15 @@ MAX_STEPS = sum(BUDGETS.values()) + 2
 PLANNER_SYSTEM = (
     "You are planning how to answer a PyTorch question using tools. Each turn, "
     "reply with ONE json object and nothing else:\n"
-    '  {"action":"search_docs","query":"english keywords","library":null}\n'
+    '  {"action":"search_docs","query":"english keywords","library":null,"kind":null}\n'
     '  {"action":"read_page","url":"<a url from a previous search result>"}\n'
     '  {"action":"ask_source","question":"..."}  (ONLY for source-code internals)\n'
     '  {"action":"answer"}  (when the gathered context can answer the question)\n'
+    'kind picks the content space: "api" = reference pages (use for catalog '
+    'questions like "what loss functions exist?" or to find a specific class), '
+    '"tutorial" or "guide" = walkthroughs; null = everything. If a search '
+    "returned only tutorials but you need the actual API, search again with "
+    'kind "api" and the likely symbol names as the query.\n'
     "Guidance: decompose multi-part questions into several search_docs calls "
     "with different queries. Use read_page to open a promising page in full. "
     "Use ask_source only when the answer needs implementation details the docs "

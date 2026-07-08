@@ -227,3 +227,40 @@ def test_close_references_are_promoted():
     keys = [r["chunk_key"] for r in results]
     assert "torch.no_grad" in keys
     assert keys[:3] == ["tut0", "tut1", "tut2"]  # only the last seat was used
+
+
+# --- explicit kind filter (the planner chose the space) ----------------------
+
+
+def test_kind_filter_lands_in_all_channels_and_skips_api_extras():
+    conn = FakeConn([[_ref_row("SGD")], []])
+    results = retrieve(
+        "what optimizers exist", k=3, kind="api", conn=conn, embed_fn=lambda q: [0.0] * 384
+    )
+    # only dense + keyword ran: the api channel is redundant when kind is explicit
+    assert len(conn.queries) == 2
+    dense_sql, dense_params = conn.queries[0]
+    assert "kind = %(kind)s" in dense_sql and dense_params["kind"] == "api"
+    keyword_sql, _ = conn.queries[1]
+    assert "and kind = %(kind)s" in keyword_sql
+    assert [r["chunk_key"] for r in results] == ["SGD"]
+
+
+def test_kind_and_library_filters_combine():
+    conn = FakeConn([[], []])
+    retrieve(
+        "datasets", kind="api", library="vision", conn=conn, embed_fn=lambda q: [0.0] * 384
+    )
+    _, params = conn.queries[0]
+    assert params["kind"] == "api" and params["library"] == "vision"
+
+
+def test_explicit_kind_disables_the_reservation():
+    # kind='tutorial' means the caller WANTS tutorials — no api seat is forced
+    tutorials = [_tut_row(f"tut{i}") for i in range(4)]
+    conn = FakeConn([tutorials, []])
+    results = retrieve(
+        "fine tuning walkthrough", k=3, kind="tutorial", conn=conn,
+        embed_fn=lambda q: [0.0] * 384,
+    )
+    assert all(r["kind"] == "tutorial" for r in results)

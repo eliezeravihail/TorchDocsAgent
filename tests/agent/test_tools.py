@@ -29,7 +29,7 @@ def test_search_docs_shape(monkeypatch):
     monkeypatch.setattr("agent.translate.translate_to_english", lambda q, **k: q)
     monkeypatch.setattr(
         "index.retrieve.retrieve",
-        lambda q, k=8, library=None: [{"url": "u", "anchor": "a", "heading_path": "H"}],
+        lambda q, k=8, library=None, kind=None: [{"url": "u", "anchor": "a", "heading_path": "H"}],
     )
     monkeypatch.setattr(
         "index.hydrate.hydrate_section",
@@ -43,3 +43,22 @@ def test_search_docs_shape(monkeypatch):
 def test_read_page_missing(monkeypatch):
     monkeypatch.setattr("index.hydrate.hydrate_page", lambda url: None)
     assert "error" in read_page("https://x")
+
+
+def test_search_docs_passes_kind_to_retrieve(monkeypatch):
+    import agent.tools as tools
+
+    seen = {}
+
+    def fake_retrieve(q, k=8, library=None, kind=None):
+        seen["kind"] = kind
+        return []
+
+    monkeypatch.setattr("agent.translate.translate_to_english", lambda q, **k: q)
+    monkeypatch.setattr("index.retrieve.retrieve", fake_retrieve)
+
+    tools.search_docs("what loss functions exist", kind="api")
+    assert seen["kind"] == "api"
+    # a hallucinated kind degrades to an unrestricted search, never an error
+    tools.search_docs("what loss functions exist", kind="reference-manual")
+    assert seen["kind"] is None

@@ -146,12 +146,18 @@ def retrieve(
     embed_fn=None,
     pool: int = 20,
     debug: bool = False,
+    kind: str | None = None,
 ) -> list[dict[str, Any]]:
     """Top-k pointers for a query: dense (pgvector) + keyword (tsvector) via RRF.
 
     `pool` candidates are taken from each modality before fusion — the classic
     setup where keyword search rescues exact symbol names (e.g.
     `scaled_dot_product_attention`) that dense similarity alone misses.
+
+    `kind` restricts the search to one content space ('api' / 'tutorial' /
+    'guide'). The agent's planner sets it when it decides the question needs
+    the reference catalog rather than tutorial prose — the caller's judgment
+    replaces the api-channel/reservation heuristics, which are skipped.
     """
     from contextlib import nullcontext
 
@@ -165,15 +171,24 @@ def retrieve(
     ctx = nullcontext(conn) if conn is not None else get_pool().connection()
     with ctx as conn:
         params: dict[str, Any] = {"pool": pool, "query": query}
-        where, extra = "", ""
+        conditions = []
         if library:
-            where, extra = "where library = %(library)s", "and library = %(library)s"
+            conditions.append("library = %(library)s")
             params["library"] = library
+        if kind:
+            conditions.append("kind = %(kind)s")
+            params["kind"] = kind
+        where = ("where " + " and ".join(conditions)) if conditions else ""
+        extra = "".join(f"and {c} " for c in conditions)
 
         params["vector"] = str(embed_fn(query))
         dense_rows = conn.execute(DENSE_SQL.format(where=where), params).fetchall()
         keyword_rows = conn.execute(KEYWORD_SQL.format(extra=extra), params).fetchall()
-        api_rows = conn.execute(API_DENSE_SQL.format(extra=extra), params).fetchall()
+        # an explicit kind makes the reference channel redundant (kind='api')
+        # or contradictory (kind='tutorial') — the caller chose the space
+        api_rows: list[tuple] = []
+        if kind is None:
+            api_rows = conn.execute(API_DENSE_SQL.format(extra=extra), params).fetchall()
 
         symbol_rows: list[tuple] = []
         symbol = extract_symbol(query)
@@ -210,8 +225,9 @@ def retrieve(
         if exact:
             ranked = [exact] + [ck for ck in ranked if ck != exact]
 
-    dists = _collect_distances([dense_rows, api_rows])
-    ranked = _ensure_api_slots(ranked, pointers, k, dists)
+    if kind is None:  # with an explicit kind the caller already chose the space
+        dists = _collect_distances([dense_rows, api_rows])
+        ranked = _ensure_api_slots(ranked, pointers, k, dists)
     return [pointers[chunk_key] for chunk_key in ranked[:k]]
 
 
