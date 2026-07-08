@@ -37,7 +37,7 @@ on:
       llm:
         description: "agentic/judge: OpenRouter slugs (fallback chain)"
         type: string
-        default: "tencent/hy3:free,meta-llama/llama-3.3-70b-instruct:free,google/gemini-2.0-flash-exp:free"
+        default: "tencent/hy3:free,meta-llama/llama-3.3-70b-instruct:free"
       limit:
         description: "agentic only: first N questions (0 = all 20)"
         type: string

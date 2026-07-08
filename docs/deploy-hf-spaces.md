@@ -22,8 +22,10 @@ needs no `_corpus/` and no crawl** — only the Neon index (pointers) and an LLM
    - `OPENAI_COMPAT_BASE_URL` = `https://openrouter.ai/api/v1`
    - `OPENAI_COMPAT_API_KEY` — your OpenRouter key
    - `TORCHDOCS_PROVIDER` = `openai-compat`
-   - `TORCHDOCS_OPENAI_COMPAT_MODEL` = a comma-separated free-model chain
-     (e.g. `poolside/laguna-xs-2.1:free,meta-llama/llama-3.3-70b-instruct:free`)
+   - `TORCHDOCS_OPENAI_COMPAT_MODEL` = a comma-separated free-model chain, hy3
+     first (e.g. `tencent/hy3:free,meta-llama/llama-3.3-70b-instruct:free`) —
+     with OpenRouter credit hy3's free-tier daily cap is wide enough to carry
+     the Space on its own, so a second provider (gemini) is not needed.
 
 That's it — the Space boots, downloads bge-small once (~130 MB, then cached),
 and serves a public URL.
