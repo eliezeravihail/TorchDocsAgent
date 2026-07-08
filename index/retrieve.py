@@ -10,7 +10,9 @@ from __future__ import annotations
 import re
 from typing import Any
 
-POINTER_COLUMNS = "chunk_key, url, anchor, page_title, heading_path, library, kind, source_link"
+POINTER_COLUMNS = (
+    "chunk_key, url, anchor, page_title, heading_path, library, kind, source_link, part"
+)
 
 DENSE_SQL = f"""
 select {POINTER_COLUMNS} from chunks

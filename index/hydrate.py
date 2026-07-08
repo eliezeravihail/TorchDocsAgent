@@ -63,11 +63,12 @@ def hydrate_section(pointer: dict, corpus_dir: Path = CORPUS_DIR) -> dict | None
         return None
     meta, body = loaded
     heading_path = pointer.get("heading_path", "")
+    part = pointer.get("part") or 0  # size-split sections: which part of the section
     for unit in chunk_page(meta, body):
-        if " > ".join(unit["heading_path"]) == heading_path:
+        if " > ".join(unit["heading_path"]) == heading_path and unit.get("part", 0) == part:
             return {**pointer, "content": unit["content"]}
     print(
-        f"[hydrate] heading {heading_path!r} not found in {pointer['url']} "
+        f"[hydrate] heading {heading_path!r} (part {part}) not found in {pointer['url']} "
         "(page changed); dropping the pointer",
         flush=True,
     )

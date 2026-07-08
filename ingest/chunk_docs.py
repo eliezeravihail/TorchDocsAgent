@@ -21,6 +21,15 @@ GITHUB_SOURCE_RE = re.compile(r"https://github\.com/pytorch/[\w.-]+/blob/\S+")
 # they carry the TRUE anchor, and must not leak into titles/heading paths
 HEADERLINK_RE = re.compile(r"\[[^\]]*\]\(#([^)\s\"]+)[^)]*\)")
 
+# A section bigger than this is cut into parts at natural seams. Aligned with
+# index/embed.MAX_EMBED_CHARS: anything past it was invisible to the dense
+# vector anyway (embedded blind, silently). Each part inherits the section's
+# heading_path, so indexed_text() prepends the same symbol+heading "synopsis"
+# to every part — the serialized-story recap — and all parts share the
+# section's URL+anchor, so citations stay exact.
+CHUNK_TARGET_CHARS = 2000
+_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
+
 
 @dataclass
 class Section:
@@ -78,6 +87,67 @@ def split_by_heading(markdown: str) -> list[Section]:
     return sections
 
 
+def _atoms(text: str) -> list[str]:
+    """Paragraphs of the text, with fenced code blocks kept whole.
+
+    A naive split on blank lines would cut inside ``` fences (code often has
+    blank lines); half a code block is noise to embed. Fences are atoms.
+    """
+    atoms: list[str] = []
+    last = 0
+    for match in _FENCE_RE.finditer(text):
+        atoms += [p for p in text[last : match.start()].split("\n\n") if p.strip()]
+        atoms.append(match.group(0))
+        last = match.end()
+    atoms += [p for p in text[last:].split("\n\n") if p.strip()]
+    return atoms
+
+
+def _hard_split(atom: str, limit: int) -> list[str]:
+    """Last resort for one atom bigger than the whole budget: cut at line ends."""
+    parts: list[str] = []
+    current = ""
+    for line in atom.splitlines(keepends=True):
+        while len(line) > limit:  # a single enormous line — slice it
+            parts.append(line[:limit])
+            line = line[limit:]
+        if current and len(current) + len(line) > limit:
+            parts.append(current)
+            current = line
+        else:
+            current += line
+    if current.strip():
+        parts.append(current)
+    return [p.strip("\n") for p in parts if p.strip()]
+
+
+def split_oversized(text: str, limit: int | None = None) -> list[str]:
+    """Cut oversized section text into parts at natural seams.
+
+    Greedy paragraph packing: whole paragraphs (and whole code fences) are
+    accumulated until the next one would overflow the limit; only an atom
+    that alone exceeds the limit is cut inside (at line boundaries).
+    """
+    if limit is None:
+        limit = CHUNK_TARGET_CHARS
+    if len(text) <= limit:
+        return [text]
+    pieces: list[str] = []
+    for atom in _atoms(text):
+        pieces.extend(_hard_split(atom, limit) if len(atom) > limit else [atom])
+    parts: list[str] = []
+    current = ""
+    for piece in pieces:
+        if current and len(current) + 2 + len(piece) > limit:
+            parts.append(current)
+            current = piece
+        else:
+            current = f"{current}\n\n{piece}" if current else piece
+    if current:
+        parts.append(current)
+    return parts
+
+
 def page_kind(url: str) -> str:
     if "/tutorials/" in url:
         return "tutorial"
@@ -87,24 +157,31 @@ def page_kind(url: str) -> str:
 
 
 def chunk_page(meta: dict, body: str) -> list[dict]:
-    """One snapshot page → list of OKF-unit dicts (frontmatter fields + content)."""
+    """One snapshot page → list of OKF-unit dicts (frontmatter fields + content).
+
+    Oversized sections are cut into parts (split_oversized); every part keeps
+    the section's heading_path (its embedded "synopsis") and URL+anchor (its
+    citation), and carries a `part` ordinal that makes its identity unique.
+    """
     units = []
     for section in split_by_heading(body):
         if not section.text:
             continue
-        units.append(
-            {
-                "url": meta["url"],
-                "anchor": section.anchor,
-                "page_title": meta.get("title", ""),
-                "heading_path": section.heading_path,
-                "library": meta.get("library", ""),
-                "kind": page_kind(meta["url"]),
-                "source_link": section.source_link,
-                "content_hash": meta.get("content_hash", ""),
-                "content": section.text,
-            }
-        )
+        for part, content in enumerate(split_oversized(section.text)):
+            units.append(
+                {
+                    "url": meta["url"],
+                    "anchor": section.anchor,
+                    "page_title": meta.get("title", ""),
+                    "heading_path": section.heading_path,
+                    "library": meta.get("library", ""),
+                    "kind": page_kind(meta["url"]),
+                    "source_link": section.source_link,
+                    "content_hash": meta.get("content_hash", ""),
+                    "part": part,
+                    "content": content,
+                }
+            )
     return units
 
 

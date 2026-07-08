@@ -93,3 +93,64 @@ def test_write_units_same_anchor_sections_dont_collide(tmp_path):
     assert len(set(paths)) == 2  # distinct files, nothing overwritten
     bodies = {p.read_text(encoding="utf-8").split("---\n", 2)[2].strip() for p in paths}
     assert bodies == {"first section", "second section"}
+
+
+# --- size-capped splitting ------------------------------------------------
+
+
+def test_small_section_stays_whole():
+    from ingest.chunk_docs import split_oversized
+
+    assert split_oversized("short text", limit=100) == ["short text"]
+
+
+def test_oversized_section_splits_at_paragraph_seams():
+    from ingest.chunk_docs import split_oversized
+
+    paragraphs = [f"paragraph {i} " + "x" * 80 for i in range(10)]
+    text = "\n\n".join(paragraphs)
+    parts = split_oversized(text, limit=250)
+    assert len(parts) > 1
+    assert all(len(p) <= 250 for p in parts)
+    # nothing lost: every paragraph survives, whole, in exactly one part
+    for paragraph in paragraphs:
+        assert sum(p.count(paragraph) for p in parts) == 1
+
+
+def test_code_fence_is_never_cut():
+    from ingest.chunk_docs import split_oversized
+
+    fence = "```python\nx = 1\n\n\ny = 2\n```"  # blank lines INSIDE the fence
+    text = ("word " * 40 + "\n\n") + fence + ("\n\n" + "word " * 40)
+    parts = split_oversized(text, limit=230)
+    assert len(parts) > 1
+    joined = [p for p in parts if fence in p]
+    assert len(joined) == 1  # the fence rode whole inside one part
+
+
+def test_single_giant_atom_hard_splits_on_lines():
+    from ingest.chunk_docs import split_oversized
+
+    atom = "\n".join(f"line {i}" for i in range(100))  # one paragraph, no \n\n
+    parts = split_oversized(atom, limit=120)
+    assert all(len(p) <= 120 for p in parts)
+    assert "".join(p.replace("\n", "") for p in parts).count("line 99") == 1
+
+
+def test_chunk_page_emits_sequential_parts_sharing_identity(monkeypatch):
+    import ingest.chunk_docs as cd
+
+    monkeypatch.setattr(cd, "CHUNK_TARGET_CHARS", 120)
+    body = "## Distributed Training\n\n" + "\n\n".join("prose " * 15 for _ in range(4))
+    units = cd.chunk_page({"url": "https://x/page.html", "title": "T"}, body)
+    assert len(units) > 1
+    assert [u["part"] for u in units] == list(range(len(units)))
+    # every part keeps the same citation identity (url/anchor/heading path)
+    assert len({(u["url"], u["anchor"], tuple(u["heading_path"])) for u in units}) == 1
+
+
+def test_unsplit_sections_have_part_zero():
+    from ingest.chunk_docs import chunk_page
+
+    units = chunk_page({"url": "https://x/p.html", "title": "T"}, "## A\n\nshort")
+    assert [u["part"] for u in units] == [0]

@@ -36,6 +36,7 @@ create table if not exists chunks (
     source_link   text not null default '',
     content_hash  text not null,
     index_version text not null,
+    part          int not null default 0,  -- ordinal within a size-split section
     embedding     vector({EMBED_DIMS}) not null,
     tsv           tsvector not null
 );
@@ -104,6 +105,9 @@ def set_meta(conn: psycopg.Connection, key: str, value: str) -> None:
 
 def ensure_schema(conn: psycopg.Connection) -> None:
     conn.execute(SCHEMA)
+    # columns added after the table first shipped — CREATE IF NOT EXISTS won't
+    # touch an existing table, so bring it up to date explicitly
+    conn.execute("alter table chunks add column if not exists part int not null default 0")
     # the index is a rebuildable cache: if the embedding dimension changed
     # (model swap), drop and recreate rather than mixing vector spaces
     row = conn.execute(

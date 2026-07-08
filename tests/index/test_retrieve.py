@@ -48,7 +48,7 @@ class FakeConn:
 
 
 def _row(key, url="https://docs.pytorch.org/docs/stable/x.html", heading="H"):
-    return (key, url, "anchor", "title", heading, "core", "api", "")
+    return (key, url, "anchor", "title", heading, "core", "api", "", 0)
 
 
 def test_retrieve_merges_dense_and_keyword():
@@ -117,7 +117,7 @@ def test_retrieve_without_conn_borrows_and_returns_pool_connection(monkeypatch):
 
 def _api_row(key, symbol):
     url = f"https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.{symbol}.html"
-    return (key, url, "", "", "", "core", "api", "")
+    return (key, url, "", "", "", "core", "api", "", 0)
 
 
 def test_exact_api_page_pinned_first():
