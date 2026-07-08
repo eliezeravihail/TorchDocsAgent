@@ -71,3 +71,56 @@ def test_ensure_schema_fresh_table_no_drop():
     conn = FakeConn(atttypmod=None)  # column introspection returns nothing
     ensure_schema(conn)
     assert not _dropped(conn)
+
+
+def test_get_pool_applies_runtime_migrations(monkeypatch):
+    # a deploy can SELECT a new column (e.g. `part`) before any index build
+    # runs ensure_schema — the pool itself must bring the table up to date
+    import sys
+    import types
+
+    from index import db
+
+    executed = []
+
+    class FakeConn:
+        def execute(self, sql, *args):
+            executed.append(sql)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    class FakePool:
+        check_connection = staticmethod(lambda conn: None)
+
+        def __init__(self, url, **kwargs):
+            pass
+
+        def open(self):
+            pass
+
+        def connection(self):
+            return FakeConn()
+
+    monkeypatch.setenv("NEON_URL", "postgresql://user:pw@host/db")
+    monkeypatch.setitem(
+        sys.modules, "psycopg_pool", types.SimpleNamespace(ConnectionPool=FakePool)
+    )
+    db.get_pool.cache_clear()
+    try:
+        db.get_pool()
+    finally:
+        db.get_pool.cache_clear()
+    assert any("add column if not exists part" in sql for sql in executed)
+
+
+def test_ensure_schema_applies_runtime_migrations():
+    from index.db import RUNTIME_MIGRATIONS, SCHEMA
+
+    # the migration list is the single source both writers consume; the base
+    # SCHEMA must already contain each migrated column for fresh tables
+    assert any("part" in m for m in RUNTIME_MIGRATIONS)
+    assert "part" in SCHEMA

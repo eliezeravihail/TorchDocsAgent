@@ -87,6 +87,12 @@ def get_pool():
         open=False,  # constructor-time open is deprecated in psycopg_pool 3.2
     )
     pool.open()
+    # the app SELECTs columns that may postdate the live table (e.g. `part`);
+    # apply the idempotent migrations here too, or a fresh deploy 500s on every
+    # search until the next index build runs ensure_schema
+    with pool.connection() as conn:
+        for migration in RUNTIME_MIGRATIONS:
+            conn.execute(migration)
     return pool
 
 
@@ -103,11 +109,19 @@ def set_meta(conn: psycopg.Connection, key: str, value: str) -> None:
     )
 
 
+# Columns added after the chunks table first shipped. CREATE IF NOT EXISTS
+# won't touch an existing table, so both writers (ensure_schema) and the app
+# (get_pool) apply these idempotent migrations — the app because it may deploy
+# and SELECT a new column before the next index build ever runs.
+RUNTIME_MIGRATIONS = [
+    "alter table chunks add column if not exists part int not null default 0",
+]
+
+
 def ensure_schema(conn: psycopg.Connection) -> None:
     conn.execute(SCHEMA)
-    # columns added after the table first shipped — CREATE IF NOT EXISTS won't
-    # touch an existing table, so bring it up to date explicitly
-    conn.execute("alter table chunks add column if not exists part int not null default 0")
+    for migration in RUNTIME_MIGRATIONS:
+        conn.execute(migration)
     # the index is a rebuildable cache: if the embedding dimension changed
     # (model swap), drop and recreate rather than mixing vector spaces
     row = conn.execute(
