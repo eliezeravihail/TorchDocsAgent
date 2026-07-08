@@ -36,7 +36,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/huggingface
-          key: hf-bge-base-en-v1.5
+          key: hf-bge-small-en-v1.5
       - run: pip install -e .
       - name: Build index
         env:
