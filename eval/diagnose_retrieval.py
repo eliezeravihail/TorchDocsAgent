@@ -19,10 +19,14 @@ from dotenv import load_dotenv
 # (qid, question, expected-substring) — a representative slice of the API/code
 # misses from retrieval_v1: all descriptive, none containing the symbol token.
 PROBES = [
-    ("a06", "What's the standard fully-connected layer that applies a weight matrix and bias?", "torch.nn.linear"),
-    ("a17", "For multi-class classification, which loss takes raw logits and the target class index?", "crossentropyloss"),
-    ("c02", "What exactly is SGD's parameter update step, including momentum, mathematically?", "torch.optim.sgd"),
-    ("a10", "Which normalization layer works per-sample across features, the one transformers use?", "layernorm"),
+    ("a06", "What's the standard fully-connected layer that applies a weight matrix "
+            "and bias?", "torch.nn.linear"),
+    ("a17", "For multi-class classification, which loss takes raw logits and the "
+            "target class index?", "crossentropyloss"),
+    ("c02", "What exactly is SGD's parameter update step, including momentum, "
+            "mathematically?", "torch.optim.sgd"),
+    ("a10", "Which normalization layer works per-sample across features, the one "
+            "transformers use?", "layernorm"),
 ]
 
 POOL = 20
@@ -70,7 +74,8 @@ def main() -> int:
                     loc.append(f"dense#{d_rank} dist={d_dist:.3f}")
                 if k_rank:
                     loc.append(f"keyword#{k_rank}")
-                print(f"      → expected in [{kd}]: {', '.join(loc) if loc else 'ABSENT from top-20'}")
+                where_txt = ", ".join(loc) if loc else "ABSENT from top-20"
+                print(f"      → expected in [{kd}]: {where_txt}")
     return 0
 
 

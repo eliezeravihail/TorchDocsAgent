@@ -2,9 +2,10 @@
 
 Each content kind (api / tutorial / guide) gets its own pool — dense +
 keyword, RRF-merged WITHIN the kind — so verbose tutorials can never crowd
-reference pages out of the results (and vice versa). A relevance threshold
-drops candidates far from the best hit, pools are interleaved strongest-first
-into the top-k, and the answering model judges what is actually relevant.
+reference pages out of the results (and vice versa). A per-pool relevance
+threshold drops candidates far from that kind's own best hit, pools are
+interleaved strongest-first into the top-k, and the answering model judges
+what is actually relevant.
 This replaced a global-RRF design whose crowding fixes (a reference channel,
 reserved seats, distance gates) traded one benchmark regression for another.
 
@@ -236,24 +237,29 @@ def _interleave_pools(
 ) -> list[str]:
     """Merge per-kind rankings into one top-k, round-robin, strongest pool first.
 
-    The relevance threshold runs here: candidates farther than RELEVANCE_GAP
-    from the best hit overall are dropped (keyword-only candidates carry no
-    distance and are kept). Round-robin guarantees every surviving space a
+    The relevance threshold runs here, PER POOL: within each kind, candidates
+    farther than RELEVANCE_GAP from that kind's own nearest hit are dropped
+    (keyword-only candidates carry no distance and are kept). Gapping per pool,
+    not against a global best, is the whole point of per-kind pools — a close
+    tutorial must not set a threshold that filters the entire api pool out, or
+    a descriptive question that a tutorial answers first would never surface its
+    reference page at all. Round-robin then guarantees every surviving space a
     share of the k seats; ordering pools by their best distance keeps the most
     relevant kind in front, so a tutorial-shaped question still leads with
     tutorials. The answering model does the final relevance judgment.
     """
-    best = min(dists.values(), default=None)
-
-    def relevant(ck: str) -> bool:
-        d = dists.get(ck)
-        return best is None or d is None or d <= best + RELEVANCE_GAP
 
     def pool_strength(ranked: list[str]) -> float:
         known = [dists[ck] for ck in ranked if ck in dists]
         return min(known) if known else float("inf")
 
-    filtered = [(name, [ck for ck in ranked if relevant(ck)]) for name, ranked in pools]
+    def keep_within_gap(ranked: list[str]) -> list[str]:
+        best = pool_strength(ranked)  # this pool's own nearest hit
+        if best == float("inf"):  # keyword-only pool — no distances to gate on
+            return ranked
+        return [ck for ck in ranked if (d := dists.get(ck)) is None or d <= best + RELEVANCE_GAP]
+
+    filtered = [(name, keep_within_gap(ranked)) for name, ranked in pools]
     # the symbol pool (if present) was inserted first and stays first; the
     # kind pools compete on the strength of their best surviving candidate
     lead = [p for p in filtered if p[0] == "symbol"]
