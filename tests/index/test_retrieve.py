@@ -112,18 +112,32 @@ def test_strongest_pool_leads_the_interleave():
     assert [r["chunk_key"] for r in results] == ["tut0", "ref0", "tut1"]
 
 
-def test_relevance_threshold_drops_far_candidates():
-    # junk that merely won its own pool (an RNNT page on an SGD question) is
-    # dropped; a keyword-only hit (no distance) is kept — exact lexical match
-    # on a rare term is a signal of its own
+def test_relevance_threshold_drops_far_candidates_within_a_pool():
+    # the gap runs PER POOL: an api page far from the api pool's OWN best is
+    # dropped; the pool's near cluster is kept; a keyword-only hit (no distance)
+    # is kept — exact lexical match on a rare term is a signal of its own
+    api = [_row("near_ref", kind="api", dist=0.30), _row("far_ref", kind="api", dist=0.55)]
     tuts = [_row("tut0", kind="tutorial", dist=0.20)]
-    far_refs = [_row("junk", kind="api", dist=0.55)]  # 0.55 > 0.20 + 0.15
     kw_only = [_row("rare-term-hit", kind="guide")]
-    conn = FakeConn([far_refs, [], tuts, [], [], kw_only])
+    conn = FakeConn([api, [], tuts, [], [], kw_only])
     results = retrieve("update weights sgd", k=4, conn=conn, embed_fn=lambda q: [0.0] * 384)
     keys = [r["chunk_key"] for r in results]
-    assert "junk" not in keys
-    assert "tut0" in keys and "rare-term-hit" in keys
+    assert "far_ref" not in keys  # 0.55 > 0.30 + 0.15, its own pool's outlier
+    assert "near_ref" in keys and "tut0" in keys and "rare-term-hit" in keys
+
+
+def test_close_tutorial_does_not_empty_the_api_pool():
+    # regression for the global-best gap bug: a close tutorial (0.18) used to set
+    # a threshold that filtered out EVERY api candidate (0.40), so a descriptive
+    # question a tutorial answered first never surfaced its reference page at all.
+    # Per-pool gapping keeps the api pool's own near cluster regardless.
+    api = [_row("ref0", kind="api", dist=0.40)]
+    tuts = [_row("tut0", kind="tutorial", dist=0.18)]
+    conn = FakeConn([api, [], tuts, [], [], []])
+    results = retrieve("fully connected layer", k=4, conn=conn, embed_fn=lambda q: [0.0] * 384)
+    keys = [r["chunk_key"] for r in results]
+    assert "ref0" in keys  # 0.40 fails a global 0.18+0.15 gap, but its pool keeps it
+    assert keys[0] == "tut0"  # the closer pool still leads the interleave
 
 
 def test_library_filter_lands_in_every_pool_query():

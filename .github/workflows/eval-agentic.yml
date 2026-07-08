@@ -12,6 +12,11 @@ on:
         description: "OpenRouter models (comma-separated free slugs, a fallback chain)"
         type: string
         default: "deepseek/deepseek-chat-v3-0324:free,meta-llama/llama-3.3-70b-instruct:free"
+      limit:
+        description: "Run only the first N agentic questions (0 = all 20). Free-tier
+          rate limits make the full set slow — start with a bounded sample."
+        type: string
+        default: "6"
 
 permissions:
   contents: write
@@ -19,7 +24,7 @@ permissions:
 jobs:
   agentic:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -40,11 +45,12 @@ jobs:
           OPENAI_COMPAT_BASE_URL: https://openrouter.ai/api/v1
           OPENAI_COMPAT_API_KEY: ${{ secrets.OPENROUTER }}
           TORCHDOCS_OPENAI_COMPAT_MODEL: ${{ inputs.model }}
+          TORCHDOCS_AGENTIC_LIMIT: ${{ inputs.limit }}
         run: python -m eval.run_agentic
       - name: Commit results back to the branch
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -f eval/results/agentic_v1.jsonl
+          git add -f eval/results/agentic_v1*.jsonl
           git diff --cached --quiet || git commit -m "eval: agentic results from Actions run [skip ci]"
           git push
