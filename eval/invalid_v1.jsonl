@@ -1,0 +1,100 @@
+{"id": "r01", "category": "react", "question": "How do I manage local state in a function component with the useState hook?"}
+{"id": "r02", "category": "react", "question": "When does useEffect run, and how do I clean up a subscription in it?"}
+{"id": "r03", "category": "react", "question": "How do I pass data from a parent component to a child through props?"}
+{"id": "r04", "category": "react", "question": "What's the difference between useMemo and useCallback for memoization?"}
+{"id": "r05", "category": "react", "question": "How do I share state across the tree with the Context API instead of prop drilling?"}
+{"id": "r06", "category": "react", "question": "How do I write a custom hook that debounces a value?"}
+{"id": "r07", "category": "react", "question": "How do I keep a mutable value across renders without triggering a re-render using useRef?"}
+{"id": "r08", "category": "react", "question": "How do I conditionally render a list of items with keys in JSX?"}
+{"id": "r09", "category": "react", "question": "How do I fetch data on mount and show a loading spinner in a React component?"}
+{"id": "r10", "category": "react", "question": "How do I set up client-side routing with React Router and nested routes?"}
+{"id": "r11", "category": "react", "question": "How do I manage global state with Redux Toolkit slices and the store?"}
+{"id": "r12", "category": "react", "question": "How do I do server-side rendering and data fetching with Next.js getServerSideProps?"}
+{"id": "r13", "category": "react", "question": "How do I wrap a component in React.memo to avoid unnecessary re-renders?"}
+{"id": "r14", "category": "react", "question": "How do I handle form inputs as controlled components with onChange?"}
+{"id": "r15", "category": "react", "question": "How do I use useReducer to manage complex component state?"}
+{"id": "r16", "category": "react", "question": "How do I lazy-load a component with React.lazy and Suspense?"}
+{"id": "r17", "category": "react", "question": "How do I style a component with CSS modules or styled-components?"}
+{"id": "r18", "category": "react", "question": "How do I forward a ref to a child DOM node with forwardRef?"}
+{"id": "r19", "category": "react", "question": "How do I catch rendering errors with an error boundary component?"}
+{"id": "r20", "category": "react", "question": "How do I portal a modal outside the parent DOM hierarchy with ReactDOM.createPortal?"}
+{"id": "r21", "category": "react", "question": "How do I animate a component mount with Framer Motion?"}
+{"id": "r22", "category": "react", "question": "How do I type component props with TypeScript in a React project?"}
+{"id": "r23", "category": "react", "question": "How do I batch state updates and understand automatic batching in React 18?"}
+{"id": "r24", "category": "react", "question": "How do I use the useContext hook to consume a theme provider?"}
+{"id": "r25", "category": "react", "question": "How do I set up a Vite React project and configure hot module reload?"}
+{"id": "t01", "category": "tensorflow", "question": "How do I record operations for automatic differentiation with tf.GradientTape?"}
+{"id": "t02", "category": "tensorflow", "question": "How do I build a model with the Keras Sequential API and compile it with an optimizer and loss?"}
+{"id": "t03", "category": "tensorflow", "question": "How do I create an input pipeline with tf.data.Dataset and batch and prefetch it?"}
+{"id": "t04", "category": "tensorflow", "question": "How do I export and reload a model in the TensorFlow SavedModel format?"}
+{"id": "t05", "category": "tensorflow", "question": "How do I speed up a function by tracing it into a graph with tf.function?"}
+{"id": "t06", "category": "tensorflow", "question": "How do I train a Keras model with model.fit and validation data?"}
+{"id": "t07", "category": "tensorflow", "question": "How do I write a custom Keras layer by subclassing tf.keras.layers.Layer?"}
+{"id": "t08", "category": "tensorflow", "question": "How do I use tf.distribute.MirroredStrategy for multi-GPU training in TensorFlow?"}
+{"id": "t09", "category": "tensorflow", "question": "How do I convert a Keras model to TensorFlow Lite for mobile deployment?"}
+{"id": "t10", "category": "tensorflow", "question": "How do I add Keras callbacks like EarlyStopping and ModelCheckpoint to training?"}
+{"id": "t11", "category": "tensorflow", "question": "How do I create and update a tf.Variable inside a training step?"}
+{"id": "t12", "category": "tensorflow", "question": "How do I use the functional Keras API to build a model with multiple inputs?"}
+{"id": "t13", "category": "tensorflow", "question": "How do I serve a SavedModel with TensorFlow Serving over gRPC?"}
+{"id": "t14", "category": "tensorflow", "question": "How do I write a custom training loop in TensorFlow with GradientTape and apply_gradients?"}
+{"id": "t15", "category": "tensorflow", "question": "How do I log scalars and histograms to TensorBoard from a TensorFlow run?"}
+{"id": "t16", "category": "tensorflow", "question": "How do I use tf.keras.preprocessing image data generators for augmentation?"}
+{"id": "t17", "category": "tensorflow", "question": "How do I define feature columns for a structured-data model in TensorFlow?"}
+{"id": "t18", "category": "tensorflow", "question": "How do I work with ragged tensors in TensorFlow for variable-length sequences?"}
+{"id": "t19", "category": "tensorflow", "question": "How do I quantize a TensorFlow Lite model with post-training quantization?"}
+{"id": "t20", "category": "tensorflow", "question": "How do I load a pretrained model from TensorFlow Hub as a Keras layer?"}
+{"id": "t21", "category": "tensorflow", "question": "How do I use tf.constant and tf.reshape to manipulate tensors in TensorFlow?"}
+{"id": "t22", "category": "tensorflow", "question": "How do I set up a tf.estimator model and train it with an input_fn?"}
+{"id": "t23", "category": "tensorflow", "question": "How do I use Keras mixed precision with the global policy setter?"}
+{"id": "t24", "category": "tensorflow", "question": "How do I checkpoint and restore weights with tf.train.Checkpoint?"}
+{"id": "t25", "category": "tensorflow", "question": "How do I build an LSTM text classifier with tf.keras.layers.LSTM and an Embedding layer?"}
+{"id": "o01", "category": "other", "question": "How do I JIT-compile a NumPy function and take its gradient with JAX grad and jit?"}
+{"id": "o02", "category": "other", "question": "How do I train a random forest classifier with scikit-learn and tune it with GridSearchCV?"}
+{"id": "o03", "category": "other", "question": "How do I group a pandas DataFrame by a column and aggregate with mean?"}
+{"id": "o04", "category": "other", "question": "How do I fit a gradient boosting model with XGBoost and do early stopping?"}
+{"id": "o05", "category": "other", "question": "How do I vectorize a function over an array axis with numpy.vectorize?"}
+{"id": "o06", "category": "other", "question": "How do I define pmap and vmap transformations over device meshes in JAX?"}
+{"id": "o07", "category": "other", "question": "How do I standardize features with scikit-learn's StandardScaler in a Pipeline?"}
+{"id": "o08", "category": "other", "question": "How do I merge two pandas DataFrames on a key column with a left join?"}
+{"id": "o09", "category": "other", "question": "How do I set up a REST endpoint with FastAPI and validate the request body with Pydantic?"}
+{"id": "o10", "category": "other", "question": "How do I write an async producer-consumer with asyncio queues in Python?"}
+{"id": "o11", "category": "other", "question": "How do I train a text classifier with spaCy's pipeline and custom components?"}
+{"id": "o12", "category": "other", "question": "How do I build an ETL job with Apache Airflow DAGs and operators?"}
+{"id": "o13", "category": "other", "question": "How do I plot a grouped bar chart with matplotlib and add a legend?"}
+{"id": "o14", "category": "other", "question": "How do I do dimensionality reduction with UMAP and visualize the clusters?"}
+{"id": "o15", "category": "other", "question": "How do I containerize a web service with a multi-stage Dockerfile?"}
+{"id": "o16", "category": "other", "question": "How do I query a Postgres database with SQLAlchemy's ORM and a session?"}
+{"id": "o17", "category": "other", "question": "How do I set up distributed data processing with Apache Spark DataFrames?"}
+{"id": "o18", "category": "other", "question": "How do I implement k-means clustering from scratch with numpy?"}
+{"id": "o19", "category": "other", "question": "What's a good sourdough starter feeding schedule for a cold kitchen?"}
+{"id": "o20", "category": "other", "question": "How do I parallelize a CPU-bound loop across cores with Python's multiprocessing Pool?"}
+{"id": "o21", "category": "other", "question": "How do I set up continuous deployment with GitHub Actions to deploy to AWS?"}
+{"id": "o22", "category": "other", "question": "How do I compute a rolling average over a time series in pandas?"}
+{"id": "o23", "category": "other", "question": "How do I write a recursive descent parser for a small arithmetic grammar?"}
+{"id": "o24", "category": "other", "question": "How do I do sentiment analysis with an NLTK VADER analyzer?"}
+{"id": "o25", "category": "other", "question": "How do I set up OAuth2 login with Auth0 in a single-page app?"}
+{"id": "r26", "category": "react", "question": "How do I optimize a large list with react-window virtualization?"}
+{"id": "r27", "category": "react", "question": "How do I persist state to localStorage and rehydrate it on load in React?"}
+{"id": "r28", "category": "react", "question": "How do I fetch and cache server state with React Query and invalidate it?"}
+{"id": "r29", "category": "react", "question": "How do I compose higher-order components without prop collisions?"}
+{"id": "r30", "category": "react", "question": "How do I test a component's user interactions with React Testing Library?"}
+{"id": "r31", "category": "react", "question": "How do I use useLayoutEffect versus useEffect for DOM measurements?"}
+{"id": "r32", "category": "react", "question": "How do I implement infinite scroll with an IntersectionObserver in React?"}
+{"id": "r33", "category": "react", "question": "How do I set up a global toast notification system with a provider and hook?"}
+{"id": "r34", "category": "react", "question": "How do I debounce a search input and cancel stale requests in a React component?"}
+{"id": "r35", "category": "react", "question": "How do I code-split routes and prefetch chunks in a React app?"}
+{"id": "r36", "category": "react", "question": "How do I manage a controlled multi-step form wizard's state across steps?"}
+{"id": "r37", "category": "react", "question": "How do I use the useImperativeHandle hook to expose methods from a child?"}
+{"id": "r38", "category": "react", "question": "How do I server-render a React app and hydrate it on the client?"}
+{"id": "r39", "category": "react", "question": "How do I theme a component library with a design-token context provider?"}
+{"id": "r40", "category": "react", "question": "How do I handle keyboard focus management in an accessible React dropdown?"}
+{"id": "t26", "category": "tensorflow", "question": "How do I use tf.image operations to resize and augment a batch of images?"}
+{"id": "t27", "category": "tensorflow", "question": "How do I define a learning-rate schedule with tf.keras.optimizers.schedules?"}
+{"id": "t28", "category": "tensorflow", "question": "How do I apply a Keras normalization preprocessing layer adapted to my data?"}
+{"id": "t29", "category": "tensorflow", "question": "How do I use tf.py_function to wrap arbitrary Python in a tf.data pipeline?"}
+{"id": "t30", "category": "tensorflow", "question": "How do I export training metrics with a Keras CSVLogger callback?"}
+{"id": "t31", "category": "tensorflow", "question": "How do I build a text vectorization layer with tf.keras.layers.TextVectorization?"}
+{"id": "t32", "category": "tensorflow", "question": "How do I run inference with a frozen TensorFlow graph and a session in TF1 compat mode?"}
+{"id": "t33", "category": "tensorflow", "question": "How do I shard a tf.data.Dataset across workers with the distribution strategy?"}
+{"id": "t34", "category": "tensorflow", "question": "How do I define a custom Keras loss and metric function with the backend ops?"}
+{"id": "t35", "category": "tensorflow", "question": "How do I use tf.saved_model.load to run a SavedModel's serving signature?"}

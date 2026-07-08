@@ -3,7 +3,9 @@
 import json
 from pathlib import Path
 
-from eval.run_retrieval import EXPECTED, QUESTIONS, group_rank, question_metrics
+from eval.run_retrieval import group_rank, question_metrics
+
+EVAL = Path(__file__).parent.parent.parent / "eval"
 
 
 def _p(url, title=""):
@@ -40,12 +42,40 @@ def test_question_metrics_no_hits():
     assert m["recall"] == 0.0 and m["mrr"] == 0.0
 
 
-def test_expectations_align_with_the_question_set():
-    question_ids = {json.loads(line)["id"] for line in Path(QUESTIONS).open()}
-    rows = [json.loads(line) for line in Path(EXPECTED).open()]
-    assert {r["id"] for r in rows} == question_ids  # every question has a row
-    measured = [r for r in rows if r["expected"]]
-    assert len(measured) >= 10  # enough coverage for the aggregate to mean something
-    for row in measured:
-        for group in row["expected"]:
+def _load(name):
+    return [json.loads(line) for line in (EVAL / name).open()]
+
+
+def test_v1_question_sets_are_well_formed():
+    valid = _load("questions_v1.jsonl")
+    invalid = _load("invalid_v1.jsonl")
+    agentic = _load("agentic_v1.jsonl")
+    assert len(valid) == 100 and len(invalid) == 100 and len(agentic) == 20
+    # unique ids within each set
+    for rows in (valid, invalid, agentic):
+        ids = [r["id"] for r in rows]
+        assert len(ids) == len(set(ids))
+    for r in valid:
+        assert r["question"] and r["expected"]
+        for group in r["expected"]:
             assert group and all(isinstance(p, str) and p for p in group)
+
+
+def test_v1_expected_sources_are_grounded_in_the_docs_inventory():
+    # the anti-memory guarantee, enforced in CI: every expected source in the
+    # valid + agentic sets must match a page/symbol the docs SITE actually
+    # publishes (eval/docs_inventory.jsonl), not something invented.
+    inv = _load("docs_inventory.jsonl")
+    hay = [(r["url"].lower(), r["name"].lower()) for r in inv]
+
+    def grounded(sub: str) -> bool:
+        s = sub.lower()
+        return any(s in url or s in name for url, name in hay)
+
+    ungrounded = []
+    for name in ("questions_v1.jsonl", "agentic_v1.jsonl"):
+        for r in _load(name):
+            for group in r.get("expected", []) + r.get("expected_any", []):
+                if not any(grounded(sub) for sub in group):
+                    ungrounded.append((r["id"], group))
+    assert not ungrounded, f"expected sources not in the docs inventory: {ungrounded[:10]}"
