@@ -1,20 +1,23 @@
 """Retrieval benchmark: does search_docs surface the RIGHT pages?
 
 Usage:  python -m eval.run_retrieval        (needs NEON_URL; questions are English)
+        TORCHDOCS_EVAL_SET=v0 python -m eval.run_retrieval   (the old 13-q set)
 
-Measures the retrieval layer alone — no LLM, no answer generation. Each v0
-question (eval/questions_v0.jsonl) has expected sources in
-eval/retrieval_v0.jsonl: a list of GROUPS, each group a list of alternative
-URL/title substrings (any alternative counts as that source found). Questions
-with no groups (edge questions whose answer is a referral) are skipped.
+Measures the retrieval layer alone — no LLM, no answer generation. Each
+question carries expected sources: a list of GROUPS, each group a list of
+alternative URL/title substrings (any alternative counts as that source
+found). Questions with no groups (referral-only edge cases) are skipped.
+
+Default set is v1 (eval/questions_v1.jsonl, 100 questions authored against the
+verified external docs inventory — expected sources inline). v0 is the
+original 13-question set (questions_v0.jsonl + retrieval_v0.jsonl).
 
 Metrics per question, at k = TORCHDOCS_RETRIEVAL_K (default 8, the app's k):
   recall@k — matched groups / expected groups
   MRR      — 1 / rank of the first pointer matching any group
 
-Run this BEFORE and AFTER retrieval-affecting changes (chunking, embedding
-recipe, ranking) — the aggregate line is the comparison. Results are written
-to eval/results/retrieval_v0.jsonl so runs can be diffed.
+Run BEFORE and AFTER retrieval-affecting changes; the aggregate line is the
+comparison. Results are written to eval/results/retrieval_<set>.jsonl.
 """
 
 from __future__ import annotations
@@ -27,9 +30,26 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 EVAL_DIR = Path(__file__).parent
-QUESTIONS = EVAL_DIR / "questions_v0.jsonl"
-EXPECTED = EVAL_DIR / "retrieval_v0.jsonl"
-RESULTS = EVAL_DIR / "results" / "retrieval_v0.jsonl"
+EVAL_SET = os.environ.get("TORCHDOCS_EVAL_SET", "v1")
+RESULTS = EVAL_DIR / "results" / f"retrieval_{EVAL_SET}.jsonl"
+
+
+def load_questions() -> dict[str, dict]:
+    """{id: {question, expected}} for the selected set.
+
+    v1 carries expected sources inline; v0 keeps them in a sibling file.
+    """
+    if EVAL_SET == "v0":
+        qs = (EVAL_DIR / "questions_v0.jsonl").open()
+        questions = {json.loads(x)["id"]: json.loads(x) for x in qs}
+        for line in (EVAL_DIR / "retrieval_v0.jsonl").open():
+            row = json.loads(line)
+            questions.get(row["id"], {})["expected"] = row["expected"]
+        return questions
+    return {
+        json.loads(x)["id"]: json.loads(x)
+        for x in (EVAL_DIR / f"questions_{EVAL_SET}.jsonl").open()
+    }
 
 
 def pointer_text(pointer: dict) -> str:
@@ -64,14 +84,14 @@ def main() -> int:
     from index.retrieve import retrieve
 
     k = int(os.environ.get("TORCHDOCS_RETRIEVAL_K", "8"))
-    questions = {json.loads(line)["id"]: json.loads(line) for line in QUESTIONS.open()}
-    expectations = {json.loads(line)["id"]: json.loads(line) for line in EXPECTED.open()}
+    questions = load_questions()
 
     RESULTS.parent.mkdir(exist_ok=True)
     records, recalls, mrrs = [], [], []
+    print(f"eval set: {EVAL_SET}  ({len(questions)} questions)")
     print(f"{'id':<6}{'recall@' + str(k):<12}{'MRR':<8}misses")
     for qid, q in questions.items():
-        expected = expectations.get(qid, {}).get("expected", [])
+        expected = q.get("expected", [])
         if not expected:
             print(f"{qid:<6}{'—':<12}{'—':<8}(no docs source expected — skipped)")
             continue

@@ -1,0 +1,100 @@
+{"id": "a01", "type": "api", "question": "I want plain SGD but with a little momentum so training doesn't stall. How do I set that up?", "expected": [["torch.optim.sgd"]]}
+{"id": "a02", "type": "api", "question": "What's a good default optimizer for a transformer — the Adam variant with decoupled weight decay?", "expected": [["adamw"]]}
+{"id": "a03", "type": "api", "question": "How do I drop my learning rate by a fixed factor every few epochs?", "expected": [["steplr"]]}
+{"id": "a04", "type": "api", "question": "I'd like the learning rate to follow a smooth cosine curve down over training. What's the scheduler?", "expected": [["cosineannealinglr"]]}
+{"id": "a05", "type": "api", "question": "Is there a scheduler that lowers the LR automatically when validation loss plateaus?", "expected": [["reducelronplateau"]]}
+{"id": "a06", "type": "api", "question": "What's the standard fully-connected layer that applies a weight matrix and bias?", "expected": [["torch.nn.linear"]]}
+{"id": "a07", "type": "api", "question": "How do I add a 2D convolution layer for images?", "expected": [["torch.nn.conv2d"]]}
+{"id": "a08", "type": "api", "question": "I'm building a generator that upsamples with learned filters — which layer does transposed convolution?", "expected": [["convtranspose2d"]]}
+{"id": "a09", "type": "api", "question": "How do I normalize activations across the batch between conv layers?", "expected": [["batchnorm2d"]]}
+{"id": "a10", "type": "api", "question": "Which normalization layer works per-sample across features, the one transformers use?", "expected": [["layernorm"]]}
+{"id": "a11", "type": "api", "question": "How do I randomly zero activations during training to reduce overfitting?", "expected": [["torch.nn.dropout"]]}
+{"id": "a12", "type": "api", "question": "What's the class for the smooth GELU activation used in modern transformers?", "expected": [["torch.nn.gelu"]]}
+{"id": "a13", "type": "api", "question": "Which module maps token IDs to dense vectors, a learnable lookup table?", "expected": [["torch.nn.embedding"]]}
+{"id": "a14", "type": "api", "question": "How do I add an LSTM to process a sequence?", "expected": [["torch.nn.lstm"]]}
+{"id": "a15", "type": "api", "question": "Is there a built-in full transformer encoder-decoder module I can instantiate directly?", "expected": [["torch.nn.transformer"]]}
+{"id": "a16", "type": "api", "question": "How do I compute multi-head attention as its own layer with separate Q, K and V?", "expected": [["multiheadattention"]]}
+{"id": "a17", "type": "api", "question": "For multi-class classification, which loss takes raw logits and the target class index?", "expected": [["crossentropyloss"]]}
+{"id": "a18", "type": "api", "question": "I already have log-probabilities and want the negative log likelihood loss. Which one?", "expected": [["nllloss"]]}
+{"id": "a19", "type": "api", "question": "What loss penalizes squared error for a plain regression?", "expected": [["mseloss"]]}
+{"id": "a20", "type": "api", "question": "For binary classification straight from logits, which numerically stable loss folds in the sigmoid?", "expected": [["bcewithlogitsloss"]]}
+{"id": "a21", "type": "api", "question": "How do I downsample a feature map by taking the max in each window?", "expected": [["maxpool2d"]]}
+{"id": "a22", "type": "api", "question": "I want to pool to a fixed output size regardless of input size before my classifier. What does that?", "expected": [["adaptiveavgpool2d"]]}
+{"id": "a23", "type": "api", "question": "What's the simplest container to run a few layers in order without writing forward?", "expected": [["torch.nn.sequential"]]}
+{"id": "a24", "type": "api", "question": "How do I hold a variable-length list of submodules so they register as parameters?", "expected": [["modulelist"]]}
+{"id": "a25", "type": "api", "question": "I want the functional scaled dot product attention that uses the fast fused kernels. What's it called?", "expected": [["scaled_dot_product_attention"]]}
+{"id": "a26", "type": "api", "question": "How do I wrap a dataset to get shuffled mini-batches with parallel loading?", "expected": [["dataloader", "torch.utils.data"]]}
+{"id": "a27", "type": "api", "question": "How do I split a dataset randomly into train and validation subsets?", "expected": [["random_split", "torch.utils.data"]]}
+{"id": "a28", "type": "api", "question": "My classes are imbalanced — is there a sampler that draws examples with given weights?", "expected": [["weightedrandomsampler"]]}
+{"id": "a29", "type": "api", "question": "How do I disable gradient tracking around an eval block to save memory?", "expected": [["torch.no_grad"]]}
+{"id": "a30", "type": "api", "question": "There's a stricter inference-only context manager beyond no_grad. What is it?", "expected": [["inference_mode"]]}
+{"id": "a31", "type": "api", "question": "How do I concatenate a list of tensors along an existing dimension?", "expected": [["torch.cat"]]}
+{"id": "a32", "type": "api", "question": "How do I combine tensors along a brand new axis?", "expected": [["torch.stack"]]}
+{"id": "a33", "type": "api", "question": "How do I write a batched multiply with index notation?", "expected": [["torch.einsum"]]}
+{"id": "a34", "type": "api", "question": "How do I pick values along a dimension using an index tensor?", "expected": [["torch.gather"]]}
+{"id": "a35", "type": "api", "question": "How do I select element-wise between two tensors based on a boolean mask?", "expected": [["torch.where"]]}
+{"id": "a36", "type": "api", "question": "How do I clip gradients so their global norm stays under a threshold?", "expected": [["clip_grad_norm"]]}
+{"id": "a37", "type": "api", "question": "How do I turn on automatic mixed precision for the forward pass on GPU?", "expected": [["autocast", "amp"]]}
+{"id": "a38", "type": "api", "question": "With mixed precision, what scales the loss so small gradients don't underflow?", "expected": [["gradscaler", "amp"]]}
+{"id": "a39", "type": "api", "question": "How do I compile my model for speedups with the PyTorch 2 graph compiler?", "expected": [["torch.compile"]]}
+{"id": "a40", "type": "api", "question": "How do I export a trained model to ONNX?", "expected": [["torch.onnx"]]}
+{"id": "a41", "type": "api", "question": "For multi-GPU training, which wrapper syncs gradients across processes?", "expected": [["distributeddataparallel"]]}
+{"id": "a42", "type": "api", "question": "How do I make runs reproducible by fixing the RNG seed?", "expected": [["manual_seed"]]}
+{"id": "a43", "type": "api", "question": "How do I compute gradients explicitly with autograd instead of calling backward?", "expected": [["torch.autograd.grad"]]}
+{"id": "a44", "type": "api", "question": "Which torchvision entry point gives me a pretrained ResNet-50?", "expected": [["resnet50"]]}
+{"id": "a45", "type": "api", "question": "How do I chain image preprocessing steps in torchvision?", "expected": [["transforms.compose", "compose"]]}
+{"id": "a46", "type": "api", "question": "How do I standardize image tensors with a per-channel mean and std in torchvision?", "expected": [["transforms.normalize", "normalize"]]}
+{"id": "a47", "type": "api", "question": "How do I load CIFAR-10 from torchvision?", "expected": [["cifar10"]]}
+{"id": "a48", "type": "api", "question": "I have images in class-named folders — which torchvision dataset reads that layout?", "expected": [["imagefolder"]]}
+{"id": "a49", "type": "api", "question": "How do I turn a waveform into a mel spectrogram with torchaudio?", "expected": [["melspectrogram"]]}
+{"id": "a50", "type": "api", "question": "How do I resample audio to a different sample rate with torchaudio?", "expected": [["torchaudio.transforms.resample", "resample"]]}
+{"id": "g01", "type": "guide", "question": "I'm brand new — where's the beginner walkthrough that trains a model on FashionMNIST end to end?", "expected": [["quickstart", "basics"]]}
+{"id": "g02", "type": "guide", "question": "Where does the basics series explain tensors and operations on them?", "expected": [["tensorqs", "tensor"]]}
+{"id": "g03", "type": "guide", "question": "Which basics tutorial covers Datasets and DataLoaders with a worked example?", "expected": [["data_tutorial"]]}
+{"id": "g04", "type": "guide", "question": "Where's the beginner explanation of how autograd computes gradients automatically?", "expected": [["autogradqs", "autograd"]]}
+{"id": "g05", "type": "guide", "question": "Which tutorial walks through the optimization loop with zero_grad, backward and step?", "expected": [["optimization_tutorial"]]}
+{"id": "g06", "type": "guide", "question": "Where's the basics page on saving, loading and running a saved model?", "expected": [["saveloadrun"]]}
+{"id": "g07", "type": "guide", "question": "Which blitz tutorial builds a small CNN and trains it on CIFAR-10?", "expected": [["cifar10_tutorial"]]}
+{"id": "g08", "type": "guide", "question": "How do I fine-tune a pretrained network on my own images? Point me at the transfer learning tutorial.", "expected": [["transfer_learning"]]}
+{"id": "g09", "type": "guide", "question": "Where's the object detection tutorial that fine-tunes Mask R-CNN on a custom dataset?", "expected": [["torchvision_tutorial"]]}
+{"id": "g10", "type": "guide", "question": "I want to build a character-level RNN that classifies names by language. Is there a tutorial?", "expected": [["char_rnn_classification"]]}
+{"id": "g11", "type": "guide", "question": "Where's the sequence-to-sequence translation tutorial with attention?", "expected": [["seq2seq_translation"]]}
+{"id": "g12", "type": "guide", "question": "Where's the getting-started guide for multi-GPU DistributedDataParallel training?", "expected": [["ddp_tutorial"]]}
+{"id": "g13", "type": "guide", "question": "Is there a recipe on why and how to zero gradients each iteration?", "expected": [["zeroing_out_gradients"]]}
+{"id": "g14", "type": "guide", "question": "Where's the recipe explaining what a state_dict actually is?", "expected": [["what_is_state_dict"]]}
+{"id": "g15", "type": "guide", "question": "How do I warm-start a model from another model's parameters? Is there a recipe?", "expected": [["warmstart"]]}
+{"id": "g16", "type": "guide", "question": "I want to profile where training time goes — which recipe covers the profiler?", "expected": [["profiler"]]}
+{"id": "g17", "type": "guide", "question": "Where's the tutorial on speeding up models with torch.compile?", "expected": [["torch_compile_tutorial"]]}
+{"id": "g18", "type": "guide", "question": "How do I prune weights from a trained network? Point me at the pruning tutorial.", "expected": [["pruning_tutorial"]]}
+{"id": "g19", "type": "guide", "question": "I want to visualize training in TensorBoard — is there a tutorial wiring PyTorch to it?", "expected": [["tensorboard"]]}
+{"id": "g20", "type": "guide", "question": "Where's the spatial transformer network tutorial?", "expected": [["spatial_transformer"]]}
+{"id": "g21", "type": "guide", "question": "How do I write a custom C++ extension? Point me at the advanced tutorial.", "expected": [["cpp_extension"]]}
+{"id": "g22", "type": "guide", "question": "Where's the neural style transfer tutorial?", "expected": [["neural_style"]]}
+{"id": "g23", "type": "guide", "question": "Which recipe covers saving and loading a general checkpoint for inference or resuming?", "expected": [["saving_loading_models", "saving_and_loading"]]}
+{"id": "g24", "type": "guide", "question": "Is there a tutorial on the channels-last memory format for faster convolutions?", "expected": [["memory_format"]]}
+{"id": "g25", "type": "guide", "question": "Where's the distributed training tutorial that explains process groups and collectives from scratch?", "expected": [["dist_tuto"]]}
+{"id": "g26", "type": "guide", "question": "Which introyt lesson walks through building models with torch.nn?", "expected": [["modelsyt"]]}
+{"id": "g27", "type": "guide", "question": "Where's the introyt lesson on a full training loop?", "expected": [["trainingyt"]]}
+{"id": "g28", "type": "guide", "question": "How do I fine-tune the torchvision classification models? Is there a beginner tutorial?", "expected": [["finetuning_torchvision"]]}
+{"id": "g29", "type": "guide", "question": "Where's the neural networks blitz tutorial that introduces nn.Module with LeNet?", "expected": [["neural_networks_tutorial"]]}
+{"id": "g30", "type": "guide", "question": "Which basics tutorial shows how to build a neural network with nn.Module layers?", "expected": [["buildmodel"]]}
+{"id": "c01", "type": "code", "question": "Under the hood, what does a 2D convolution operator compute?", "expected": [["conv2d"]]}
+{"id": "c02", "type": "code", "question": "What exactly is SGD's parameter update step, including momentum, mathematically?", "expected": [["torch.optim.sgd"]]}
+{"id": "c03", "type": "code", "question": "How does Adam compute its update — the moment estimates and bias correction?", "expected": [["torch.optim.adam"]]}
+{"id": "c04", "type": "code", "question": "What does batch normalization compute at train time versus eval time?", "expected": [["batchnorm"]]}
+{"id": "c05", "type": "code", "question": "How is dropout applied in the forward pass, and what changes in eval mode?", "expected": [["dropout"]]}
+{"id": "c06", "type": "code", "question": "What does cross entropy loss compute internally, combining log-softmax and NLL?", "expected": [["crossentropyloss", "cross_entropy"]]}
+{"id": "c07", "type": "code", "question": "What does the fused scaled dot product attention kernel compute?", "expected": [["scaled_dot_product_attention"]]}
+{"id": "c08", "type": "code", "question": "How does an LSTM cell compute its gates step by step?", "expected": [["lstm"]]}
+{"id": "c09", "type": "code", "question": "What does gradient clipping by norm compute to rescale gradients?", "expected": [["clip_grad_norm"]]}
+{"id": "c10", "type": "code", "question": "What exactly does GELU compute — the erf form versus the tanh approximation?", "expected": [["gelu"]]}
+{"id": "c11", "type": "code", "question": "What does layer normalization normalize over, precisely?", "expected": [["layernorm"]]}
+{"id": "c12", "type": "code", "question": "How does an embedding layer look up vectors and propagate gradients?", "expected": [["embedding"]]}
+{"id": "c13", "type": "code", "question": "What does torch.matmul do for different input dimensionalities?", "expected": [["matmul"]]}
+{"id": "c14", "type": "code", "question": "What does the cosine annealing scheduler compute for the LR each step?", "expected": [["cosineannealing"]]}
+{"id": "c15", "type": "code", "question": "What does adaptive average pooling compute to hit a fixed output size for any input?", "expected": [["adaptiveavgpool"]]}
+{"id": "c16", "type": "code", "question": "What does max pooling compute, including how gradients route on the backward pass?", "expected": [["maxpool"]]}
+{"id": "c17", "type": "code", "question": "How does NLL loss compute the loss from log-probabilities and targets?", "expected": [["nllloss"]]}
+{"id": "c18", "type": "code", "question": "What does the softmax function compute and over which dimension?", "expected": [["softmax"]]}
+{"id": "c19", "type": "code", "question": "How does torch.gather select values along a dimension internally?", "expected": [["gather"]]}
+{"id": "c20", "type": "code", "question": "What does BCEWithLogitsLoss compute, and why is it more stable than sigmoid plus BCE?", "expected": [["bcewithlogitsloss"]]}

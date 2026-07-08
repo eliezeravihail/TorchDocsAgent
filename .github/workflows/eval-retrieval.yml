@@ -1,11 +1,17 @@
 name: Eval retrieval
 
-# Measure the retrieval layer alone against the LIVE index: recall@k + MRR per
-# v0 question (expected sources in eval/retrieval_v0.jsonl). Run BEFORE and
-# AFTER retrieval-affecting changes (chunking, embed recipe, ranking) and
-# compare the aggregate line. Results are committed back for diffing.
+# Measure the retrieval layer alone against the LIVE index: recall@k + MRR over
+# the 100 valid questions (eval/questions_v1.jsonl, expected sources grounded in
+# the external docs inventory). Run BEFORE and AFTER retrieval-affecting changes
+# and compare the aggregate line. Results are committed back for diffing.
+# Set the `set` input to v0 to run the original 13-question set instead.
 on:
   workflow_dispatch:
+    inputs:
+      set:
+        description: "eval set (v1 = 100 questions, v0 = original 13)"
+        type: string
+        default: v1
 
 permissions:
   contents: write
@@ -30,11 +36,12 @@ jobs:
         env:
           PYTHONUNBUFFERED: "1"
           NEON_URL: ${{ secrets.NEON }}
+          TORCHDOCS_EVAL_SET: ${{ inputs.set }}
         run: python -m eval.run_retrieval
       - name: Commit results back to the branch
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -f eval/results/retrieval_v0.jsonl
-          git diff --cached --quiet || git commit -m "eval: retrieval v0 results from Actions run [skip ci]"
+          git add -f eval/results/retrieval_*.jsonl
+          git diff --cached --quiet || git commit -m "eval: retrieval results from Actions run [skip ci]"
           git push

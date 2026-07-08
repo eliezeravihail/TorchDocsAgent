@@ -1,0 +1,20 @@
+{"id": "m01", "kind": "catalog", "question": "What loss functions does PyTorch provide for multi-class classification, and when would I pick each?", "expected_any": [["crossentropyloss"], ["nllloss"]]}
+{"id": "m02", "kind": "catalog", "question": "Which learning-rate schedulers are available in torch.optim, in one line each?", "expected_any": [["steplr"], ["cosineannealinglr"], ["reducelronplateau"]]}
+{"id": "m03", "kind": "catalog", "question": "What activation functions does torch.nn offer, and which are common in modern nets?", "expected_any": [["torch.nn.relu"], ["torch.nn.gelu"]]}
+{"id": "m04", "kind": "catalog", "question": "Which optimizers ship with torch.optim and how do they differ?", "expected_any": [["torch.optim.sgd"], ["torch.optim.adam"], ["adamw"]]}
+{"id": "m05", "kind": "catalog", "question": "What pooling layers does torch.nn have for downsampling?", "expected_any": [["maxpool2d"], ["adaptiveavgpool2d"]]}
+{"id": "m06", "kind": "catalog", "question": "What normalization layers are in torch.nn and what does each normalize over?", "expected_any": [["batchnorm2d"], ["layernorm"]]}
+{"id": "m07", "kind": "catalog", "question": "What image datasets does torchvision ship with out of the box?", "expected_any": [["cifar10"], ["torchvision.datasets"]]}
+{"id": "m08", "kind": "catalog", "question": "Which recurrent layers does torch.nn provide for sequences?", "expected_any": [["torch.nn.lstm"], ["torch.nn.gru"]]}
+{"id": "m09", "kind": "compare", "question": "What's the difference between torch.no_grad and inference_mode, and when should I use each?", "expected_any": [["torch.no_grad"], ["inference_mode"]]}
+{"id": "m10", "kind": "compare", "question": "How do DataParallel and DistributedDataParallel differ, and which should I use for multi-GPU?", "expected_any": [["distributeddataparallel"], ["torch.nn.dataparallel"]]}
+{"id": "m11", "kind": "compare", "question": "What's the difference between BCELoss and BCEWithLogitsLoss?", "expected_any": [["bceloss"], ["bcewithlogitsloss"]]}
+{"id": "m12", "kind": "compare", "question": "Adam vs AdamW — what actually changes in the weight decay?", "expected_any": [["torch.optim.adam"], ["adamw"]]}
+{"id": "m13", "kind": "compare", "question": "When would I use torch.cat versus torch.stack?", "expected_any": [["torch.cat"], ["torch.stack"]]}
+{"id": "m14", "kind": "compare", "question": "What's the difference between Tensor.view and Tensor.reshape?", "expected_any": [["torch.tensor.view", "view"], ["reshape"]]}
+{"id": "m15", "kind": "recipe", "question": "How do I build a convolutional network to classify cats vs dogs end to end — model, data, training loop?", "expected_any": [["conv2d"], ["dataloader", "torch.utils.data"], ["crossentropyloss"]]}
+{"id": "m16", "kind": "recipe", "question": "How do I fine-tune a pretrained ResNet on my own image-folder dataset?", "expected_any": [["resnet"], ["imagefolder"], ["transfer_learning"]]}
+{"id": "m17", "kind": "recipe", "question": "How do I set up mixed-precision training with autocast and a grad scaler, and what are the pieces?", "expected_any": [["autocast", "amp"], ["gradscaler", "amp"]]}
+{"id": "m18", "kind": "recipe", "question": "How do I save checkpoints and resume training after an interruption, including optimizer state?", "expected_any": [["state_dict"], ["saving_loading_models", "saving_and_loading"]]}
+{"id": "m19", "kind": "recipe", "question": "How do I build and train a small transformer for sequence classification — the layers I need?", "expected_any": [["torch.nn.transformer"], ["torch.nn.embedding"]]}
+{"id": "m20", "kind": "recipe", "question": "How do I add an LR scheduler to my SGD training loop and step it correctly each epoch?", "expected_any": [["torch.optim.sgd"], ["steplr", "lr_scheduler"]]}
