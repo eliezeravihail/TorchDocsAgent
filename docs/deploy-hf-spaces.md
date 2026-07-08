@@ -25,7 +25,7 @@ needs no `_corpus/` and no crawl** — only the Neon index (pointers) and an LLM
    - `TORCHDOCS_OPENAI_COMPAT_MODEL` = a comma-separated free-model chain
      (e.g. `poolside/laguna-xs-2.1:free,meta-llama/llama-3.3-70b-instruct:free`)
 
-That's it — the Space boots, downloads bge-small once (~130 MB, then cached),
+That's it — the Space boots, downloads bge-base once (~440 MB, then cached),
 and serves a public URL.
 
 ## Notes
