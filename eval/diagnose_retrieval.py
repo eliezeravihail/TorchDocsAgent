@@ -47,6 +47,11 @@ def main() -> int:
     url_i = POINTER_COLUMNS.replace(" ", "").replace("\n", "").split(",").index("url")
 
     with get_pool().connection() as conn:
+        from index.retrieve import HNSW_EF_SEARCH
+
+        # mirror retrieve(): widen the approximate scan so kind-filtered dense
+        # queries here behave like the product path
+        conn.execute(f"set hnsw.ef_search = {HNSW_EF_SEARCH:d}")
         for qid, question, expected in PROBES:
             print(f"\n{'=' * 78}\n{qid}: {question}\n  expected page contains: {expected!r}")
             vec = str(embed_query(question))

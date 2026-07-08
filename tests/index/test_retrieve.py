@@ -38,8 +38,12 @@ class FakeConn:
     def __init__(self, result_sets):
         self._results = list(result_sets)
         self.queries = []
+        self.settings = []  # session SETs (e.g. hnsw.ef_search), kept separate
 
     def execute(self, sql, params=None):
+        if sql.lstrip().lower().startswith("set "):
+            self.settings.append(sql)
+            return None
         self.queries.append((sql, params))
         rows = self._results.pop(0)
         from types import SimpleNamespace
@@ -154,6 +158,18 @@ def test_non_symbol_query_runs_no_symbol_query():
     conn = FakeConn(_no_pools())
     retrieve("how to train a model", k=3, conn=conn, embed_fn=lambda q: [0.0] * 384)
     assert len(conn.queries) == 6
+
+
+def test_dense_search_widens_the_hnsw_candidate_scan():
+    # pgvector filters AFTER the approximate index scan: at the default
+    # ef_search=40 a kind-filtered query can drop a page that is truly rank-7
+    # within its kind (measured live: torch.optim.SGD). The session must widen
+    # the scan before any dense query runs.
+    from index.retrieve import HNSW_EF_SEARCH
+
+    conn = FakeConn(_no_pools())
+    retrieve("sgd update rule", k=3, conn=conn, embed_fn=lambda q: [0.0] * 384)
+    assert conn.settings and f"ef_search = {HNSW_EF_SEARCH}" in conn.settings[0]
 
 
 def test_symbol_query_escapes_ilike_and_pins_exact_page():

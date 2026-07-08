@@ -56,6 +56,15 @@ KINDS = ("api", "tutorial", "guide")
 # match on a rare term is a signal of its own.
 RELEVANCE_GAP = 0.15
 
+# HNSW is approximate AND pgvector applies WHERE filters *after* the index
+# scan: with the default ef_search=40, a `kind='api'` query first collects the
+# ~40 globally-nearest chunks (mostly tutorials for a descriptive question) and
+# only then filters — the api page can be discarded before the filter ever sees
+# it. Diagnosed on the live index: torch.optim.SGD sat at TRUE dense rank 7
+# within api, yet was absent from the returned top-20. A wider candidate scan
+# fixes exactly this; ~2ms extra per query on a 7K-chunk index.
+HNSW_EF_SEARCH = 150
+
 # a symbol-ish token: dotted/underscored identifier (torch.nn.functional.sdpa,
 # scaled_dot_product_attention). Bare words like "SGD" go through dense+keyword.
 _SYMBOL_TOKEN = re.compile(r"[A-Za-z_][\w.]*[._][\w.]*[A-Za-z0-9_]")
@@ -176,6 +185,7 @@ def retrieve(
     dists: dict[str, float] = {}
 
     with ctx as conn:
+        conn.execute(f"set hnsw.ef_search = {HNSW_EF_SEARCH:d}")
         base: dict[str, Any] = {"pool": pool, "query": query, "vector": str(embed_fn(query))}
         conditions = ["kind = %(kind)s"]
         if library:
