@@ -20,17 +20,18 @@ from functools import cache
 import psycopg
 
 # Embedding width, derived from the model so it can't drift from index/embed.py.
-# bge-base-en-v1.5 (768d) resolves finer semantic distinctions than bge-small
-# (384d) — a "loss function" question lands nearer the reference page instead
-# of tutorial prose — at ~4x the model size, still local/CPU/free. A model not
-# in the table needs TORCHDOCS_EMBED_DIMS set. Changing dims rebuilds the
-# chunks table automatically (see ensure_schema).
+# Default is bge-small (384d): a controlled A/B against bge-base (768d, full
+# re-embed + benchmark on 2026-07-08) showed IDENTICAL retrieval recall
+# (0.846) and marginally worse MRR at 4x the model size and 2x the build time
+# — no measurable gain, so we keep the cheaper model. The table stays so a
+# future swap is a one-line change + automatic rebuild (see ensure_schema).
+# A model not listed needs TORCHDOCS_EMBED_DIMS set.
 _MODEL_DIMS = {
     "BAAI/bge-small-en-v1.5": 384,
     "BAAI/bge-base-en-v1.5": 768,
     "BAAI/bge-large-en-v1.5": 1024,
 }
-_DEFAULT_EMBED_MODEL = "BAAI/bge-base-en-v1.5"
+_DEFAULT_EMBED_MODEL = "BAAI/bge-small-en-v1.5"
 
 
 def embed_dims() -> int:

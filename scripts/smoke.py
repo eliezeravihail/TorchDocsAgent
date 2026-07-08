@@ -3,7 +3,7 @@
 Checks, in order:
   1. Neon Postgres    — connect, create a scratch table, write one row, read it back.
   2. Gemini LLM       — one short message round-trip.
-  3. Embeddings       — one local bge-base call, sanity-check the vector dimension.
+  3. Embeddings       — one local bge-small call, sanity-check the vector dimension.
   4. Anthropic LLM    — one short message round-trip (optional; skipped if no key).
 
 Run:  python scripts/smoke.py
@@ -93,7 +93,7 @@ def main() -> int:
     checks = [
         ("Neon Postgres (write/read)", check_neon),
         ("Gemini LLM (one message)", check_gemini_llm),
-        ("Local embedding (bge-base, one vector)", check_embedding),
+        ("Local embedding (bge-small, one vector)", check_embedding),
         ("Anthropic LLM (optional)", check_anthropic_llm),
     ]
     failures = 0

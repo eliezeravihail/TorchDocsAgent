@@ -1,4 +1,4 @@
-"""Embed corpus chunks locally (bge-base on CPU) and upsert into Neon.
+"""Embed corpus chunks locally (bge-small on CPU) and upsert into Neon.
 
 Local by decision: Gemini's free embedding quota (~100 items/day) would take
 weeks for a 7K-chunk corpus. A small open model has no quota, no key, and no
@@ -22,17 +22,17 @@ from pathlib import Path
 from ingest.chunk_docs import chunk_page
 from ingest.crawl import CORPUS_DIR, load_page
 
-EMBED_MODEL = os.environ.get("TORCHDOCS_EMBED_MODEL", "BAAI/bge-base-en-v1.5")
+EMBED_MODEL = os.environ.get("TORCHDOCS_EMBED_MODEL", "BAAI/bge-small-en-v1.5")
 # bge convention: queries get an instruction prefix, documents do not
 QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
 BATCH_SIZE = 128
 MAX_EMBED_CHARS = 2000  # bge context is 512 tokens; beyond it is truncated anyway
 
 # bump when indexed_text() changes → forces a one-time full re-embed (dims same,
-# so the row-skip check would otherwise keep stale vectors). The bge-small→base
-# swap changes dims too, which rebuilds the table outright — the bump keeps the
-# recipe stamp honest for anyone reading index_meta.
-EMBED_RECIPE = "v3-bge-base"
+# so the row-skip check would otherwise keep stale vectors). Reverting bge-base
+# → bge-small changes dims too (768→384), which rebuilds the table outright —
+# the stamp just keeps index_meta honest about which recipe is live.
+EMBED_RECIPE = "v4-bge-small"
 
 
 def chunk_key(unit: dict) -> str:
