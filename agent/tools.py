@@ -39,17 +39,33 @@ def _search_terms(question: str) -> str:
     return quote(" ".join(kept))
 
 
-def search_docs(query: str, library: str | None = None, k: int = 8) -> dict:
-    """Hybrid docs search. Non-English queries are translated first."""
+# content spaces the planner may restrict a search to (must match ingest's
+# page_kind values); anything else from the model is ignored, not an error
+SEARCH_KINDS = frozenset({"api", "tutorial", "guide"})
+
+
+def search_docs(
+    query: str, library: str | None = None, kind: str | None = None, k: int = 8
+) -> dict:
+    """Hybrid docs search. Non-English queries are translated first.
+
+    `kind` lets the planner choose the content space: 'api' searches only the
+    reference pages (catalog questions — "what loss functions exist?"),
+    'tutorial'/'guide' only the walkthroughs. Unknown values degrade to an
+    unrestricted search rather than failing the tool call.
+    """
     from agent.translate import translate_to_english
     from index.hydrate import hydrate_section
     from index.retrieve import retrieve
 
+    if kind is not None and kind not in SEARCH_KINDS:
+        print(f"[search_docs] ignoring unknown kind {kind!r}", flush=True)
+        kind = None
     english = translate_to_english(query)
-    pointers = retrieve(english, k=k, library=library)
+    pointers = retrieve(english, k=k, library=library, kind=kind)
     sections = [s for s in (hydrate_section(p) for p in pointers) if s]
     print(
-        f"[search_docs] {english!r} → {len(pointers)} pointers, "
+        f"[search_docs] {english!r} (kind={kind}) → {len(pointers)} pointers, "
         f"{len(sections)} hydrated",
         flush=True,
     )

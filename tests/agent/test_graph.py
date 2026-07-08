@@ -26,7 +26,7 @@ def test_graph_decomposes_and_answers(monkeypatch):
     )
     calls = {"n": 0}
 
-    def fake_search(query, library=None, k=8):
+    def fake_search(query, library=None, kind=None, k=8):
         calls["n"] += 1
         return {"query": query, "sections": [{"url": f"u{calls['n']}", "anchor": "",
                 "heading_path": "H", "content": "t"}], "titles": ["H"]}
@@ -57,7 +57,7 @@ def test_graph_terminates_on_budget(monkeypatch):
     )
     monkeypatch.setattr(
         "agent.tools.search_docs",
-        lambda q, library=None, k=8: {"query": q, "sections": [], "titles": []},
+        lambda q, library=None, kind=None, k=8: {"query": q, "sections": [], "titles": []},
     )
     monkeypatch.setattr(
         "agent.grounded.answer_from_sections",

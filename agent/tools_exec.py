@@ -11,11 +11,13 @@ decision stay with each driver.
 from __future__ import annotations
 
 
-def do_search(query: str, library, *, sections: list, seen_urls: set, transcript: list) -> None:
+def do_search(
+    query: str, library, kind=None, *, sections: list, seen_urls: set, transcript: list
+) -> None:
     """Run search_docs, dedup its sections into the accumulators, log the titles."""
     from agent.tools import search_docs
 
-    result = search_docs(query, library)
+    result = search_docs(query, library, kind)
     for s in result["sections"]:
         key = s["url"] + s.get("anchor", "")
         if key not in seen_urls:
@@ -45,6 +47,7 @@ def execute_tool(
         do_search(
             action.get("query", question),
             action.get("library"),
+            action.get("kind"),
             sections=sections,
             seen_urls=seen_urls,
             transcript=transcript,

@@ -32,7 +32,7 @@ def test_loop_decomposes_and_answers(monkeypatch):
     )
     calls = {"search": 0}
 
-    def fake_search(query, library=None, k=8):
+    def fake_search(query, library=None, kind=None, k=8):
         calls["search"] += 1
         return {"query": query, "sections": [{"url": f"u{calls['search']}", "anchor": "",
                 "heading_path": "H", "content": "text"}], "titles": ["H"]}
@@ -65,7 +65,7 @@ def test_loop_source_question_adds_referrals(monkeypatch):
     # seed search runs first — stub it so the test stays offline
     monkeypatch.setattr(
         "agent.tools.search_docs",
-        lambda q, library=None, k=8: {"query": q, "sections": [], "titles": []},
+        lambda q, library=None, kind=None, k=8: {"query": q, "sections": [], "titles": []},
     )
 
     captured = {}
@@ -88,7 +88,7 @@ def test_loop_stops_at_budget(monkeypatch):
     monkeypatch.setattr("agent.llm._raw_completion", scripted.plan)
     monkeypatch.setattr(
         "agent.tools.search_docs",
-        lambda q, library=None, k=8: {"query": q, "sections": [], "titles": []},
+        lambda q, library=None, kind=None, k=8: {"query": q, "sections": [], "titles": []},
     )
     captured = {}
     monkeypatch.setattr(
@@ -98,3 +98,28 @@ def test_loop_stops_at_budget(monkeypatch):
     )
     answer_agentic("q")  # must terminate (MAX_STEPS / budget), not loop forever
     assert captured["hit"]
+
+
+def test_planner_kind_reaches_search_docs(monkeypatch):
+    # the planner decides the content space; its kind must reach the tool
+    scripted = ScriptedAgent(
+        ['{"action":"search_docs","query":"cross entropy loss","kind":"api"}',
+         '{"action":"answer"}'],
+        None,
+    )
+    seen = []
+
+    def fake_search(query, library=None, kind=None, k=8):
+        seen.append((query, kind))
+        return {"query": query, "sections": [], "titles": []}
+
+    monkeypatch.setattr("agent.llm._raw_completion", scripted.plan)
+    monkeypatch.setattr("agent.tools.search_docs", fake_search)
+    monkeypatch.setattr(
+        "agent.grounded.answer_from_sections",
+        lambda q, s, referrals=None, provider=None, client=None: Answer(answer_md="ok"),
+    )
+    answer_agentic("what loss functions exist for classification?")
+    # seed search first (no kind), then the planner's api-scoped search
+    assert seen[0] == ("what loss functions exist for classification?", None)
+    assert seen[1] == ("cross entropy loss", "api")
