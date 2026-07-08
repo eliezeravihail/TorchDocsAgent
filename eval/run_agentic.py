@@ -22,6 +22,7 @@ eval/results/agentic_v1.jsonl.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -29,7 +30,15 @@ from dotenv import load_dotenv
 
 EVAL = Path(__file__).parent
 QUESTIONS = EVAL / "agentic_v1.jsonl"
-RESULTS = EVAL / "results" / "agentic_v1.jsonl"
+
+# The full loop runs many LLM calls per question (plan → search → search →
+# answer) for BOTH the agentic and single-shot paths; on free-tier models the
+# 20-question set blows past a CI timeout on rate-limit backoff alone. LIMIT
+# runs the first N questions so the loop-vs-single-shot delta is measurable in a
+# bounded run — raise it (or set 0 for all) once a faster provider is wired.
+LIMIT = int(os.environ.get("TORCHDOCS_AGENTIC_LIMIT", "0"))
+# a partial run must not overwrite (masquerade as) the full-set results file
+RESULTS = EVAL / "results" / (f"agentic_v1_first{LIMIT}.jsonl" if LIMIT else "agentic_v1.jsonl")
 
 
 def citation_haystacks(answer) -> list[str]:
@@ -57,6 +66,9 @@ def main() -> int:
     from agent.loop import answer_agentic
 
     questions = [json.loads(line) for line in QUESTIONS.open()]
+    if LIMIT:
+        questions = questions[:LIMIT]
+        print(f"(limited to first {LIMIT} of the agentic questions)")
     RESULTS.parent.mkdir(exist_ok=True)
     records, agentic_cov, single_cov = [], [], []
 
