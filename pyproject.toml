@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "AI-powered chat agent for PyTorch documentation and code"
 requires-python = ">=3.11"
 readme = "README.md"
-license = { text = "MIT" }
+license = { text = "Proprietary — All Rights Reserved" }
 # Runtime deps live in requirements.txt (the single source), read in below via
 # dynamic metadata — HF Spaces installs that file directly, and `pip install .`
 # / `-e .` picks up the same list. One file, no drift.
