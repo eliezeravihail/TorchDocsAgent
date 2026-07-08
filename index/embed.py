@@ -28,11 +28,13 @@ QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
 BATCH_SIZE = 128
 MAX_EMBED_CHARS = 2000  # bge context is 512 tokens; beyond it is truncated anyway
 
-# bump when indexed_text() changes → forces a one-time full re-embed (dims same,
-# so the row-skip check would otherwise keep stale vectors). Reverting bge-base
-# → bge-small changes dims too (768→384), which rebuilds the table outright —
-# the stamp just keeps index_meta honest about which recipe is live.
-EMBED_RECIPE = "v4-bge-small"
+# bump the version prefix when indexed_text() changes → forces a one-time full
+# re-embed (dims same, so the row-skip check would otherwise keep stale vectors).
+# The model tag is folded in so swapping models is itself a recipe change: a
+# same-dims swap (e.g. two 768d models) still forces a re-embed, and index_meta
+# stays honest about which model's vectors are live. A dims change also rebuilds
+# the table outright (see index/db.ensure_schema).
+EMBED_RECIPE = f"v4-{EMBED_MODEL.split('/')[-1]}"
 
 
 def chunk_key(unit: dict) -> str:

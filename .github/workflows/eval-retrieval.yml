@@ -12,6 +12,11 @@ on:
         description: "eval set (v1 = 100 questions, v0 = original 13)"
         type: string
         default: v1
+      model:
+        description: "embedding model to query with — MUST match the model the
+          live index was built with, or the query vector width won't fit."
+        type: string
+        default: "BAAI/bge-small-en-v1.5"
 
 permissions:
   contents: write
@@ -30,13 +35,14 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ~/.cache/huggingface
-          key: hf-bge-small-en-v1.5
+          key: hf-${{ inputs.model }}
       - run: pip install -e .
       - name: Measure recall/MRR
         env:
           PYTHONUNBUFFERED: "1"
           NEON_URL: ${{ secrets.NEON }}
           TORCHDOCS_EVAL_SET: ${{ inputs.set }}
+          TORCHDOCS_EMBED_MODEL: ${{ inputs.model }}
         run: python -m eval.run_retrieval
       - name: Commit results back to the branch
         run: |
