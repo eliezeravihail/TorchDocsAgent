@@ -5,6 +5,11 @@ name: Diagnose retrieval
 # the retrieval fix lands.
 on:
   workflow_dispatch:
+    inputs:
+      model:
+        description: "embedding model to query with — MUST match the live index."
+        type: string
+        default: "BAAI/bge-small-en-v1.5"
 
 permissions:
   contents: read
@@ -23,10 +28,11 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ~/.cache/huggingface
-          key: hf-bge-small-en-v1.5
+          key: hf-${{ inputs.model }}
       - run: pip install -e .
       - name: Diagnose
         env:
           PYTHONUNBUFFERED: "1"
           NEON_URL: ${{ secrets.NEON }}
+          TORCHDOCS_EMBED_MODEL: ${{ inputs.model }}
         run: python -m eval.diagnose_retrieval

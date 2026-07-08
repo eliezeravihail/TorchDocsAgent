@@ -11,6 +11,12 @@ on:
         description: "comma-separated subset of the seed list (empty = all)"
         type: string
         default: ""
+      model:
+        description: "embedding model (HF id). A different width rebuilds the
+          chunks table and re-embeds the whole corpus — this REPLACES the live
+          index. Query side (eval/diagnose/app) must be run with the same model."
+        type: string
+        default: "BAAI/bge-small-en-v1.5"
   schedule:
     - cron: "0 3 * * 5" # weekly recrawl, Fridays 03:00 UTC
 
@@ -36,12 +42,14 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/huggingface
-          key: hf-bge-small-en-v1.5
+          key: hf-${{ inputs.model || 'BAAI/bge-small-en-v1.5' }}
       - run: pip install -e .
       - name: Build index
         env:
           PYTHONUNBUFFERED: "1" # stream progress lines to the log in real time
           NEON_URL: ${{ secrets.NEON }}
+          # schedule events carry no inputs → fall back to the default model
+          TORCHDOCS_EMBED_MODEL: ${{ inputs.model || 'BAAI/bge-small-en-v1.5' }}
         run: |
           ARGS=""
           if [ -n "${{ inputs.libraries }}" ]; then ARGS="--libraries ${{ inputs.libraries }}"; fi
