@@ -72,13 +72,31 @@ def validate_citations(answer: Answer, sections: list[dict]) -> Answer:
     return answer.model_copy(update={"citations": kept})
 
 
+def _flag_unverified(answer: Answer, failures: dict[str, str]) -> Answer:
+    """Attach a user-visible warning to an answer that still fails a check.
+
+    A degraded answer is delivered (never blocked), but the user must see that
+    it did not pass verification — otherwise an invented symbol or an
+    unparseable snippet ships silently. This is the visible half of the
+    static-check contract; the reasons themselves go to the logs, not the UI.
+    """
+    kinds = ", ".join(sorted(failures))
+    notice = (
+        f"This answer did not pass an automatic check ({kinds}) and may contain "
+        "an unverified code snippet or symbol — double-check it against the "
+        "linked documentation."
+    )
+    return answer.model_copy(update={"warning": notice})
+
+
 def _regenerate_if_checks_fail(user: str, answer: Answer, provider, client) -> Answer:
     """Run the static checks (parses / imports / symbols); one repair round.
 
     This wires eval/checks.py into the live answer path: if a code block
     doesn't parse, an import is off-family, or a listed symbol is missing from
     the prose, re-ask once with the reasons. Keep the repair only if it is
-    actually cleaner; never block the user on a failed check.
+    actually cleaner; never block the user on a failed check — but if failures
+    remain after the round, flag the delivered answer so the gap is visible.
     """
     from eval.checks import run_checks
 
@@ -98,10 +116,12 @@ def _regenerate_if_checks_fail(user: str, answer: Answer, provider, client) -> A
             repair, system=GROUNDED_SYSTEM, provider=provider, client=client
         )
     except GenerationError:
-        return answer  # repair round unreachable → keep the first answer
-    if sum(1 for msg in run_checks(regenerated).values() if msg) < len(failures):
-        return regenerated
-    return answer
+        return _flag_unverified(answer, failures)  # repair unreachable → keep, but flag
+    regen_failures = {name: msg for name, msg in run_checks(regenerated).items() if msg}
+    if len(regen_failures) < len(failures):
+        # repair helped; deliver it — flag only if some failures still remain
+        return _flag_unverified(regenerated, regen_failures) if regen_failures else regenerated
+    return _flag_unverified(answer, failures)  # repair didn't help → keep first, flag it
 
 
 def answer_from_sections(

@@ -107,3 +107,22 @@ def test_answer_from_sections_regenerates_on_failed_static_check():
         client=_scripted_anthropic_client([bad, good]),
     )
     assert "torch.optim.SGD" in answer.answer_md
+    assert answer.warning == ""  # repair succeeded → no degraded flag
+
+
+def test_answer_from_sections_flags_answer_that_still_fails_check():
+    # both the first answer and the repair list a symbol they never mention →
+    # the check keeps failing → the answer ships (never blocked) but must carry
+    # a visible warning so the degradation isn't silent
+    bad = {"answer_md": "Use it.", "symbols_used": ["torch.optim.SGD"],
+           "torch_version": "2.12", "citations": [], "referrals": []}
+    still_bad = {"answer_md": "Just use it.", "symbols_used": ["torch.optim.SGD"],
+                 "torch_version": "2.12", "citations": [], "referrals": []}
+    answer = answer_from_sections(
+        "how do I use SGD?",
+        [dict(s) for s in SECTIONS],
+        provider="anthropic",
+        client=_scripted_anthropic_client([bad, still_bad]),
+    )
+    assert answer.warning  # non-empty
+    assert "symbols" in answer.warning

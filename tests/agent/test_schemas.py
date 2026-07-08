@@ -8,6 +8,7 @@ def test_round_trip():
         "torch_version": "2.12",
         "citations": [{"url": "https://docs.pytorch.org/x.html", "anchor": "a", "title": "T"}],
         "referrals": [{"url": "https://github.com/pytorch/pytorch", "reason": "source"}],
+        "warning": "",
     }
     assert Answer.model_validate(original).model_dump() == original
 
@@ -16,3 +17,4 @@ def test_defaults():
     answer = Answer(answer_md="hi")
     assert answer.symbols_used == []
     assert answer.torch_version == "unknown"
+    assert answer.warning == ""

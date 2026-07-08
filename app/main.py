@@ -101,7 +101,10 @@ def _warm_up() -> None:
 
 def render(answer: Answer) -> str:
     """Answer + citations + referrals as one markdown block."""
-    parts = [answer.answer_md]
+    parts = []
+    if answer.warning:  # degraded answer (failed a static check) — flag it up top
+        parts.append(f"> ⚠️ **{answer.warning}**\n")
+    parts.append(answer.answer_md)
     if answer.citations:
         parts.append("\n---\n**Sources**")
         for c in answer.citations:

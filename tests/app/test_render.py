@@ -40,6 +40,27 @@ def test_render_no_license_note_without_citations():
     assert "BSD-3-Clause" not in render(answer)
 
 
+def test_render_shows_degraded_warning_up_top():
+    # a degraded answer (failed a static check) must carry a visible flag, not
+    # ship silently — the answer body still renders below it
+    answer = Answer(
+        answer_md="Use `torch.foo.Bar`.",
+        warning="This answer did not pass an automatic check (symbols) and may "
+        "contain an unverified code snippet or symbol — double-check it against "
+        "the linked documentation.",
+    )
+    md = render(answer)
+    assert "⚠️" in md
+    assert "did not pass an automatic check" in md
+    assert "Use `torch.foo.Bar`." in md
+    # the warning comes before the answer body
+    assert md.index("⚠️") < md.index("Use `torch.foo.Bar`.")
+
+
+def test_render_no_warning_when_clean():
+    assert "⚠️" not in render(Answer(answer_md="All good."))
+
+
 def test_respond_empty_question():
     assert "Ask me something" in respond("   ")
 

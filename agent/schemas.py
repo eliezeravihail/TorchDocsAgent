@@ -40,3 +40,11 @@ class Answer(BaseModel):
         default_factory=list,
         description="Where to look for what the context does not cover.",
     )
+    warning: str = Field(
+        default="",
+        description=(
+            "User-facing notice when the answer is degraded — e.g. it failed a "
+            "static check after a repair round and may carry an unverified "
+            "snippet or symbol. Empty for a clean answer."
+        ),
+    )
