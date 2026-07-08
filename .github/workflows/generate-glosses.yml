@@ -12,7 +12,7 @@ on:
       model:
         description: "LLM for gloss writing (OpenRouter slugs, fallback chain)"
         type: string
-        default: "tencent/hy3:free,deepseek/deepseek-chat-v3-0324:free"
+        default: "tencent/hy3:free,meta-llama/llama-3.3-70b-instruct:free"
       limit:
         description: "gloss at most N pages this run (0 = all remaining)"
         type: string

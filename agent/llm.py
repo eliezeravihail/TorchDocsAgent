@@ -31,8 +31,9 @@ ANTHROPIC_MODEL = os.environ.get("TORCHDOCS_ANTHROPIC_MODEL", "claude-sonnet-5")
 # comma-separated → fallback chain: if one model is rate-limited/gone, try the next.
 # Default is a chain of real OpenRouter free-tier slugs (org/model:free); an
 # invalid slug is the classic "OpenRouter never answers" bug — every call 404s.
+# deepseek-chat-v3-0324:free was retired to paid-only (404 as of 2026-07-08) —
+# a dead slug at the head of the chain costs a wasted call per request.
 DEFAULT_COMPAT_MODELS = (
-    "deepseek/deepseek-chat-v3-0324:free,"
     "meta-llama/llama-3.3-70b-instruct:free,"
     "google/gemini-2.0-flash-exp:free"
 )
@@ -356,6 +357,15 @@ def _compat_complete(client, messages, *, retries: int = 3, json_mode: bool = Fa
                 response = client.chat.completions.create(
                     model=model, messages=messages, **kwargs
                 )
+                if not getattr(response, "choices", None):
+                    # OpenRouter can return HTTP 200 whose body carries an
+                    # error and no choices (moderation, upstream hiccup); the
+                    # SDK parses it happily and the caller then crashes on
+                    # choices[0]. Count it as a failed attempt, not an answer.
+                    err = getattr(response, "error", None)
+                    last_exc = GenerationError(f"{model} returned no choices: {err!r}")
+                    print(f"[llm] {model} returned no choices ({err!r})", flush=True)
+                    continue
                 if model != models[0]:  # visibility: a fallback model answered
                     print(f"[llm] answered by fallback model {model}", flush=True)
                 return response, json_mode

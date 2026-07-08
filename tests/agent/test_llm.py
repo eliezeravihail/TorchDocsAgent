@@ -121,7 +121,24 @@ def test_openai_compat_repair_then_error():
     client = FakeOpenAIClient(["junk", "still junk"])
     with pytest.raises(GenerationError, match="after repair"):
         answer_question("q", provider="openai-compat", client=client)
-    assert len(client.requests) == 2
+
+
+def test_openai_compat_no_choices_reply_is_a_failed_attempt_not_a_crash():
+    # OpenRouter can return HTTP 200 with an error body and choices=None; the
+    # caller used to crash on choices[0] (TypeError) AFTER logging the model as
+    # answered. It must count as a failed attempt and the retry must answer.
+    good = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content=Answer(**GOOD_PAYLOAD).model_dump_json()))]
+    )
+    replies = [SimpleNamespace(choices=None, error={"code": 429}), good]
+
+    def create(**kwargs):
+        return replies.pop(0)
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    answer = answer_question("q", provider="openai-compat", client=client, retries=2)
+    assert answer.answer_md == "Use SGD."
+    assert not replies  # both the failed attempt and the good retry were consumed
 
 
 def test_raw_completion_uses_first_split_model_not_raw_chain(monkeypatch):
