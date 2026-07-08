@@ -38,6 +38,22 @@ order by (kind = 'api') desc, length(url) asc
 limit %(pool)s
 """
 
+# reference channel: dense search restricted to kind='api'. Catalog/source
+# questions with no explicit symbol ("what loss functions exist?") drown in
+# tutorial prose on the open channels — tutorials say "loss function" a dozen
+# times, the reference page once. This channel guarantees reference candidates
+# reach the RRF pool at all; _ensure_api_slots below guarantees the best of
+# them survive into the returned top-k.
+API_DENSE_SQL = f"""
+select {POINTER_COLUMNS} from chunks
+where kind = 'api' {{extra}}
+order by embedding <=> %(vector)s::vector
+limit %(pool)s
+"""
+
+# reference pages guaranteed in the returned top-k (when any are candidates)
+MIN_API_IN_TOP_K = 2
+
 # a symbol-ish token: dotted/underscored identifier (torch.nn.functional.sdpa,
 # scaled_dot_product_attention). Bare words like "SGD" go through dense+keyword.
 _SYMBOL_TOKEN = re.compile(r"[A-Za-z_][\w.]*[._][\w.]*[A-Za-z0-9_]")
@@ -137,6 +153,7 @@ def retrieve(
         params["vector"] = str(embed_fn(query))
         dense_rows = conn.execute(DENSE_SQL.format(where=where), params).fetchall()
         keyword_rows = conn.execute(KEYWORD_SQL.format(extra=extra), params).fetchall()
+        api_rows = conn.execute(API_DENSE_SQL.format(extra=extra), params).fetchall()
 
         symbol_rows: list[tuple] = []
         symbol = extract_symbol(query)
@@ -148,7 +165,12 @@ def retrieve(
             params["sym"] = f"%{escaped}%"
             symbol_rows = conn.execute(SYMBOL_SQL.format(extra=extra), params).fetchall()
 
-    channels = [("dense", dense_rows), ("keyword", keyword_rows), ("symbol", symbol_rows)]
+    channels = [
+        ("dense", dense_rows),
+        ("keyword", keyword_rows),
+        ("api", api_rows),
+        ("symbol", symbol_rows),
+    ]
     if debug:
         for name, rows in channels:
             print(f"[debug] {name}: {len(rows)} candidates")
@@ -168,4 +190,33 @@ def retrieve(
         if exact:
             ranked = [exact] + [ck for ck in ranked if ck != exact]
 
+    ranked = _ensure_api_slots(ranked, pointers, k)
     return [pointers[chunk_key] for chunk_key in ranked[:k]]
+
+
+def _ensure_api_slots(
+    ranked: list[str], pointers: dict[str, dict], k: int, min_api: int = MIN_API_IN_TOP_K
+) -> list[str]:
+    """Guarantee reference pages a seat in the top-k.
+
+    Tutorials mention a topic many times and rank in every open channel, so a
+    non-symbol question can fill the whole top-k with tutorial prose while the
+    reference page — the canonical answer — sits just below the cut. When
+    fewer than min_api reference (kind='api') pointers made the top-k, promote
+    the best-ranked reference candidates over the lowest-ranked tutorials.
+    """
+    top = ranked[:k]
+    have = sum(1 for ck in top if pointers[ck].get("kind") == "api")
+    extras = [ck for ck in ranked[k:] if pointers[ck].get("kind") == "api"]
+    need = min(min_api - have, len(extras))
+    if need <= 0:
+        return ranked
+    # drop the lowest-ranked non-reference entries to make room, keep order
+    to_drop: list[str] = []
+    for ck in reversed(top):
+        if len(to_drop) == need:
+            break
+        if pointers[ck].get("kind") != "api":
+            to_drop.append(ck)
+    new_top = [ck for ck in top if ck not in to_drop] + extras[:need]
+    return new_top + [ck for ck in ranked if ck not in new_top]
