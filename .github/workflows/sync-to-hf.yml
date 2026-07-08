@@ -1,11 +1,18 @@
 name: Sync to Hugging Face Space
 
-# Push main to the HF Space on every merge, so deploys need no manual git dance.
-# One-time setup: add an HF token (write) as the GitHub secret HF_TOKEN.
+# Push main to the HF Space on every merge, then smoke-test the rebuilt Space:
+# ask it a real question through the Gradio API and fail if it answers with an
+# LLM/transport error. One workflow, so a broken deploy is flagged by the same
+# run that made it. One-time setup: an HF token (write) as secret GITHUBPUSH.
 on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      question:
+        description: Question the smoke test asks the Space
+        required: false
+        default: How do I use torch.optim.SGD with momentum?
 
 jobs:
   sync:
@@ -22,3 +29,20 @@ jobs:
           git push --force \
             "https://eliezeravihail:${HF_TOKEN}@huggingface.co/spaces/eliezeravihail/torchdocs-agent" \
             HEAD:main
+
+  smoke:
+    needs: sync
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install "gradio_client>=1" requests
+      - name: Wait for RUNNING and ask a question
+        env:
+          HF_TOKEN: ${{ secrets.GITHUBPUSH }}
+          SPACE_ID: eliezeravihail/torchdocs-agent
+          SMOKE_QUESTION: ${{ github.event.inputs.question }}
+        run: python scripts/smoke_space.py
