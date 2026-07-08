@@ -8,10 +8,17 @@ name: Eval agentic
 on:
   workflow_dispatch:
     inputs:
+      provider:
+        description: "LLM provider. gemini has its own free quota (~250+/day) —
+          OpenRouter free is capped at 50 req/day without credits. A failed
+          provider falls through to the other (both keys are set)."
+        type: choice
+        options: [gemini, openai-compat]
+        default: gemini
       model:
-        description: "OpenRouter models (comma-separated free slugs, a fallback chain).
-          hy3 leads while its free window lasts (through 2026-07-21) — a strong
-          agentic model makes the loop-vs-single-shot delta an honest ceiling."
+        description: "OpenRouter models (fallback chain) — used when provider is
+          openai-compat or as the cross-provider fallback. hy3 leads while its
+          free window lasts (through 2026-07-21)."
         type: string
         default: "tencent/hy3:free,meta-llama/llama-3.3-70b-instruct:free,google/gemini-2.0-flash-exp:free"
       limit:
@@ -43,7 +50,8 @@ jobs:
         env:
           PYTHONUNBUFFERED: "1"
           NEON_URL: ${{ secrets.NEON }}
-          TORCHDOCS_PROVIDER: openai-compat
+          TORCHDOCS_PROVIDER: ${{ inputs.provider }}
+          GEMINI_API_KEY: ${{ secrets.GOOGLE_API }}
           OPENAI_COMPAT_BASE_URL: https://openrouter.ai/api/v1
           OPENAI_COMPAT_API_KEY: ${{ secrets.OPENROUTER }}
           TORCHDOCS_OPENAI_COMPAT_MODEL: ${{ inputs.model }}

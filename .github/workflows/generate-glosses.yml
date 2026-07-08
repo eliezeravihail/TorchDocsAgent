@@ -9,8 +9,16 @@ name: Generate glosses
 on:
   workflow_dispatch:
     inputs:
+      provider:
+        description: "LLM provider. gemini has its own free quota (~250+/day),
+          vs OpenRouter's 50/day without credits; a failed provider falls
+          through to the other automatically (both keys are set)."
+        type: choice
+        options: [gemini, openai-compat]
+        default: gemini
       model:
-        description: "LLM for gloss writing (OpenRouter slugs, fallback chain)"
+        description: "OpenRouter slugs (fallback chain) — used when provider
+          is openai-compat or as the cross-provider fallback"
         type: string
         default: "tencent/hy3:free,meta-llama/llama-3.3-70b-instruct:free"
       limit:
@@ -43,11 +51,13 @@ jobs:
       - name: Write glosses
         env:
           PYTHONUNBUFFERED: "1"
-          TORCHDOCS_PROVIDER: openai-compat
+          TORCHDOCS_PROVIDER: ${{ inputs.provider }}
+          GEMINI_API_KEY: ${{ secrets.GOOGLE_API }}
           OPENAI_COMPAT_BASE_URL: https://openrouter.ai/api/v1
           OPENAI_COMPAT_API_KEY: ${{ secrets.OPENROUTER }}
           TORCHDOCS_OPENAI_COMPAT_MODEL: ${{ inputs.model }}
-        run: python scripts/generate_glosses.py --limit "${{ inputs.limit }}"
+        # batch 15 keeps the full corpus under gemini's ~250/day request quota
+        run: python scripts/generate_glosses.py --limit "${{ inputs.limit }}" --batch 15 --sleep 5
       - name: Commit whatever was written (also on failure — the run is resumable)
         if: always()
         run: |
