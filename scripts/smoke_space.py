@@ -33,9 +33,14 @@ BUILD_TIMEOUT = int(os.environ.get("BUILD_TIMEOUT", "900"))
 POLL_EVERY = 15
 RUNTIME_URL = f"https://huggingface.co/api/spaces/{SPACE_ID}/runtime"
 
-# markers that mean generation/transport actually broke → hard fail
+# markers that mean generation/transport actually broke → hard fail.
+# app.main categorizes failures: "temporarily unavailable" == the LLM layer
+# (every provider failed / missing key / bad base_url), "went wrong" == a
+# non-LLM failure (Neon, a vector-dimension mismatch, a bug). Both are red, but
+# the marker that fires tells us which subsystem to look at.
 LLM_ERROR_MARKERS = (
     "went wrong",
+    "temporarily unavailable",
     "connection error",
     "llm call failed",
     "all providers failed",
@@ -116,6 +121,22 @@ def main() -> int:
     hit = next((m for m in LLM_ERROR_MARKERS if m in low), None)
     if hit:
         print(f"[smoke] FAIL: answer contains an error marker: {hit!r}", flush=True)
+        # point at the subsystem so the next debugging step is obvious
+        if "temporarily unavailable" in low:
+            print(
+                "[smoke] HINT: LLM layer — every provider in the chain failed. "
+                "Check the Space's provider secrets (TORCHDOCS_PROVIDER, "
+                "OPENAI_COMPAT_* / GEMINI keys) and whether the free-model slugs "
+                "are still live.",
+                flush=True,
+            )
+        elif "went wrong" in low:
+            print(
+                "[smoke] HINT: non-LLM failure (Neon / vector-dimension mismatch "
+                "/ a bug). Check the Space runtime logs for the '[app] answer "
+                "failed: <type>' line.",
+                flush=True,
+            )
         return 1
     if not answer.strip():
         print("[smoke] FAIL: empty answer", flush=True)

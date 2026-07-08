@@ -71,7 +71,23 @@ def test_respond_never_crashes_and_never_leaks_the_error(monkeypatch):
 
     monkeypatch.setattr("app.main.answer_agentic", boom)
     out = respond("how do I use SGD?")
-    # the user gets a generic line; the exception text (hosts, slugs, config)
-    # goes to the logs only
+    # a non-LLM failure → the generic line; the exception text (hosts, slugs,
+    # config) goes to the logs only
     assert "went wrong" in out
     assert "db-host.internal" not in out
+
+
+def test_respond_categorizes_llm_failure(monkeypatch):
+    from agent.llm import GenerationError
+
+    def no_provider(q, **k):
+        raise GenerationError("all providers failed (model-a, model-b): 429")
+
+    monkeypatch.setattr("app.main.answer_agentic", no_provider)
+    out = respond("how do I use SGD?")
+    # an LLM-layer failure gets its own message so the smoke test (and the user)
+    # can tell it apart from an index/DB failure — but still no raw detail leaks
+    assert "temporarily unavailable" in out
+    assert "went wrong" not in out
+    assert "model-a" not in out
+    assert "429" not in out

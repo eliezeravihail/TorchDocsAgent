@@ -65,6 +65,16 @@ RATE_LIMIT = int(os.environ.get("TORCHDOCS_RATE_LIMIT", "8"))
 RATE_WINDOW = float(os.environ.get("TORCHDOCS_RATE_WINDOW_SECONDS", "60"))
 BUSY_NOTE = "You're asking faster than I can answer — give it a moment and try again."
 
+# Failure messages shown to the user. Never the raw exception (it can leak
+# hosts, model slugs, config), but categorized so the message is honest and so
+# the smoke test can tell WHICH subsystem broke: a GenerationError (every
+# provider in the chain failed / a key is missing / a bad base_url) is the LLM
+# layer; anything else (Neon down, a vector-dimension mismatch, a bug) is not.
+LLM_UNAVAILABLE_NOTE = (
+    "The language model is temporarily unavailable — please try again in a moment."
+)
+GENERIC_ERROR_NOTE = "Something went wrong answering that. Please try again in a moment."
+
 _RATE_LOCK = threading.Lock()
 _RATE_BUCKETS: dict[str, deque[float]] = defaultdict(deque)
 
@@ -138,10 +148,16 @@ def respond(question: str, request: gr.Request = None) -> str:
     try:
         return render(answer_agentic(question))
     except Exception as exc:  # noqa: BLE001 — never crash the UI
-        # the real error goes to the logs; the user gets a generic line, since
-        # an exception string can leak hosts, model slugs, and config internals
+        from agent.llm import GenerationError
+
+        # the real error goes to the logs; the user gets a safe, categorized
+        # line, since an exception string can leak hosts, model slugs, and
+        # config internals. The category also lets the smoke test bisect a
+        # broken deploy: LLM layer vs. everything else (index / DB / a bug).
         print(f"[app] answer failed: {type(exc).__name__}: {exc}", flush=True)
-        return "Something went wrong answering that. Please try again in a moment."
+        if isinstance(exc, GenerationError):
+            return LLM_UNAVAILABLE_NOTE
+        return GENERIC_ERROR_NOTE
 
 
 def build_ui():
