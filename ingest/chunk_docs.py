@@ -159,7 +159,13 @@ def page_kind(url: str) -> str:
 # a signature-shaped paragraph: `class torch.nn.Linear(...)`, `torch.add(...)`
 _SIGNATURE_START_RE = re.compile(r"^(class\s+|@)?[\w.]+\(")
 _SENTENCE_RE = re.compile(r"(.+?[.!?])(?:\s|$)")
+_MD_LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")  # [text](url) → text
 SYNOPSIS_MAX_CHARS = 240
+
+
+def _plain(text: str) -> str:
+    """Markdown → comparable prose: links keep their text, emphasis dropped."""
+    return " ".join(_MD_LINK_RE.sub(r"\1", text).replace("*", "").replace("\\_", "_").split())
 
 
 def page_synopsis(body: str, limit: int = SYNOPSIS_MAX_CHARS) -> str:
@@ -170,12 +176,20 @@ def page_synopsis(body: str, limit: int = SYNOPSIS_MAX_CHARS) -> str:
     criterion computes the cross entropy loss between input logits and target")
     usually exists — buried. Extracting it deterministically (no LLM, no quota,
     no hallucination) lets indexed_text() lead every chunk of the page with it.
+
+    Shape gotcha this handles: markdownify renders Sphinx's signature <dl> as
+    ONE paragraph — `*class* torch.nn.X(...)[[source]](github)` and then the
+    description on a `:   ...` definition line. The description after the `:`
+    marker is the synopsis; naively taking the paragraph head yields the
+    signature + a github URL, which merely duplicates the chunk's own opening.
     """
     text = _FENCE_RE.sub("", body)
     for para in text.split("\n\n"):
-        flat = " ".join(para.split())
-        # strip markdown emphasis/links noise for shape checks, keep the text
-        if not flat or flat.startswith("#") or flat.startswith("["):
+        # a definition-list description line (`:   prose`) beats the paragraph
+        # head — that's where Sphinx puts the docstring summary
+        desc_lines = [ln.lstrip()[1:] for ln in para.splitlines() if ln.lstrip().startswith(": ")]
+        flat = _plain(" ".join(desc_lines) if desc_lines else para)
+        if not flat or flat.startswith("#"):
             continue
         if _SIGNATURE_START_RE.match(flat):
             continue

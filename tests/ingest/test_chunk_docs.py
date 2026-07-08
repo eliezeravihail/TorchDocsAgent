@@ -68,21 +68,35 @@ def test_chunk_page_units_and_kind():
     assert page_kind("https://docs.pytorch.org/tutorials/beginner/intro.html") == "tutorial"
 
 
-def test_page_synopsis_finds_the_docstring_summary_sentence():
+def test_page_synopsis_reads_the_sphinx_definition_line():
+    # the REAL shape markdownify produces for a generated API page: the
+    # signature and the docstring description are ONE paragraph, the
+    # description on a `:   ` definition line. v5 took the paragraph head —
+    # signature + github url — which merely duplicated the chunk's opening.
     from ingest.chunk_docs import page_synopsis
 
     body = (
-        "# torch.nn.CrossEntropyLoss\n\n"
-        "class torch.nn.CrossEntropyLoss(weight=None, size_average=None)\n\n"
-        "```python\nloss = nn.CrossEntropyLoss()\n```\n\n"
-        "This criterion computes the cross entropy loss between input logits "
-        "and target. It is useful when training classification problems.\n\n"
+        "# CrossEntropyLoss[¶](#crossentropyloss \"Permalink\")\n\n"
+        "*class* torch.nn.CrossEntropyLoss(*weight=None*, *size\\_average=None*)"
+        "[[source]](https://github.com/pytorch/pytorch/blob/main/torch/nn/modules/loss.py#L1000)\n"
+        ":   This criterion computes the cross entropy loss between input logits "
+        "and target. It is useful for classification.\n\n"
         "## Parameters\n\n* weight (Tensor) — ..."
     )
-    synopsis = page_synopsis(body)
-    # first PROSE sentence only: heading, signature, and code fence are skipped
-    assert synopsis == (
+    assert page_synopsis(body) == (
         "This criterion computes the cross entropy loss between input logits and target."
+    )
+
+
+def test_page_synopsis_plain_prose_page_still_works():
+    from ingest.chunk_docs import page_synopsis
+
+    body = (
+        "# amp\n\nAutomatic mixed precision lets you run ops in float16 where "
+        "safe. Some ops stay in float32.\n"
+    )
+    assert page_synopsis(body) == (
+        "Automatic mixed precision lets you run ops in float16 where safe."
     )
 
 
