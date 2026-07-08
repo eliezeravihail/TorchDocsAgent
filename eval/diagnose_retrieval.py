@@ -76,6 +76,31 @@ def main() -> int:
                     loc.append(f"keyword#{k_rank}")
                 where_txt = ", ".join(loc) if loc else "ABSENT from top-20"
                 print(f"      → expected in [{kd}]: {where_txt}")
+
+            # The decisive number: the expected page's OWN nearest chunk — its
+            # absolute cosine distance, and its true dense rank among ALL api
+            # chunks (count of api chunks strictly closer). rank ~25 = a crowding
+            # problem (a deeper pool / rerank helps); a far distance / rank in the
+            # hundreds = an embedding problem (only doc-side enrichment helps).
+            pat = f"%{expected}%"
+            best = conn.execute(
+                "select min(embedding <=> %(vector)s::vector) from chunks "
+                "where kind = 'api' and url ilike %(pat)s",
+                {"vector": vec, "pat": pat},
+            ).fetchone()[0]
+            if best is None:
+                print(f"\n  >>> expected page {expected!r}: no api chunk with that url")
+            else:
+                closer = conn.execute(
+                    "select count(*) from chunks where kind = 'api' "
+                    "and (embedding <=> %(vector)s::vector) < %(best)s",
+                    {"vector": vec, "best": best},
+                ).fetchone()[0]
+                print(
+                    f"\n  >>> expected page {expected!r}: nearest api chunk dist="
+                    f"{best:.3f}, true dense rank in api = {closer + 1} "
+                    f"(api-pool cutoff is top-{POOL})"
+                )
     return 0
 
 
