@@ -1,0 +1,58 @@
+name: Generate glosses
+
+# Contextual Retrieval, index side: LLM-write a one-sentence plain-language
+# gloss for every api reference page in the corpus snapshot (batched, ~300
+# calls for 3.6K pages). Resumable: already-glossed URLs are skipped and
+# partial progress is committed even on failure — re-run to fill gaps.
+# After glosses land, run Build Index (the changed recipe stamp forces the
+# one-time full re-embed), then Eval retrieval to measure the effect.
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "LLM for gloss writing (OpenRouter slugs, fallback chain)"
+        type: string
+        default: "tencent/hy3:free,deepseek/deepseek-chat-v3-0324:free"
+      limit:
+        description: "gloss at most N pages this run (0 = all remaining)"
+        type: string
+        default: "0"
+
+permissions:
+  contents: write
+
+concurrency: generate-glosses # two writers would duplicate gloss lines
+
+jobs:
+  glosses:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Restore corpus snapshot (produced by Build Index)
+        uses: actions/cache/restore@v4
+        with:
+          path: _corpus
+          key: corpus-${{ github.run_id }}
+          restore-keys: corpus-
+      - run: pip install -e .
+      - name: Write glosses
+        env:
+          PYTHONUNBUFFERED: "1"
+          TORCHDOCS_PROVIDER: openai-compat
+          OPENAI_COMPAT_BASE_URL: https://openrouter.ai/api/v1
+          OPENAI_COMPAT_API_KEY: ${{ secrets.OPENROUTER }}
+          TORCHDOCS_OPENAI_COMPAT_MODEL: ${{ inputs.model }}
+        run: python scripts/generate_glosses.py --limit "${{ inputs.limit }}"
+      - name: Commit whatever was written (also on failure — the run is resumable)
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add index/glosses.jsonl
+          git diff --cached --quiet || git commit -m "index: glosses from Actions run [skip ci]"
+          git push

@@ -9,9 +9,11 @@ on:
   workflow_dispatch:
     inputs:
       model:
-        description: "OpenRouter models (comma-separated free slugs, a fallback chain)"
+        description: "OpenRouter models (comma-separated free slugs, a fallback chain).
+          hy3 leads while its free window lasts (through 2026-07-21) — a strong
+          agentic model makes the loop-vs-single-shot delta an honest ceiling."
         type: string
-        default: "deepseek/deepseek-chat-v3-0324:free,meta-llama/llama-3.3-70b-instruct:free"
+        default: "tencent/hy3:free,deepseek/deepseek-chat-v3-0324:free,meta-llama/llama-3.3-70b-instruct:free"
       limit:
         description: "Run only the first N agentic questions (0 = all 20). Free-tier
           rate limits make the full set slow — start with a bounded sample."
