@@ -15,9 +15,9 @@ POINTER_COLUMNS = (
 )
 
 DENSE_SQL = f"""
-select {POINTER_COLUMNS} from chunks
+select {POINTER_COLUMNS}, embedding <=> %(vector)s::vector as dist from chunks
 {{where}}
-order by embedding <=> %(vector)s::vector
+order by dist
 limit %(pool)s
 """
 
@@ -45,14 +45,20 @@ limit %(pool)s
 # reach the RRF pool at all; _ensure_api_slots below guarantees the best of
 # them survive into the returned top-k.
 API_DENSE_SQL = f"""
-select {POINTER_COLUMNS} from chunks
+select {POINTER_COLUMNS}, embedding <=> %(vector)s::vector as dist from chunks
 where kind = 'api' {{extra}}
-order by embedding <=> %(vector)s::vector
+order by dist
 limit %(pool)s
 """
 
-# reference pages guaranteed in the returned top-k (when any are candidates)
-MIN_API_IN_TOP_K = 2
+# Reservation limits, tuned on the retrieval benchmark (2026-07-08): with 2
+# blind seats, promoted-but-irrelevant reference pages displaced a real hit at
+# rank 7 (q10 regressed 1.00→0.00) and junk (torchaudio RNNT for an SGD
+# question) got promoted. One seat, and only for a candidate whose cosine
+# distance is within API_SLOT_MAX_GAP of the best result — a reserved seat for
+# QUALIFIED references, not for whatever the api channel happened to rank.
+MIN_API_IN_TOP_K = 1
+API_SLOT_MAX_GAP = 0.10
 
 # a symbol-ish token: dotted/underscored identifier (torch.nn.functional.sdpa,
 # scaled_dot_product_attention). Bare words like "SGD" go through dense+keyword.
@@ -87,8 +93,22 @@ def rrf_merge(rankings: list[list[str]], k: int = 60) -> dict[str, float]:
 
 
 def _rows_to_pointers(rows: list[tuple]) -> dict[str, dict[str, Any]]:
-    keys = POINTER_COLUMNS.replace(" ", "").split(",")
-    return {row[0]: dict(zip(keys, row, strict=True)) for row in rows}
+    keys = POINTER_COLUMNS.replace(" ", "").replace("\n", "").split(",")
+    # dense-channel rows carry a trailing `dist` column beyond the pointer
+    # fields — slice it off here; retrieve() collects it separately
+    return {row[0]: dict(zip(keys, row[: len(keys)], strict=True)) for row in rows}
+
+
+def _collect_distances(row_sets: list[list[tuple]]) -> dict[str, float]:
+    """chunk_key → best cosine distance, from rows that carry a dist column."""
+    n_pointer_cols = len(POINTER_COLUMNS.replace(" ", "").replace("\n", "").split(","))
+    dists: dict[str, float] = {}
+    for rows in row_sets:
+        for row in rows:
+            if len(row) > n_pointer_cols:
+                d = float(row[n_pointer_cols])
+                dists[row[0]] = min(dists.get(row[0], d), d)
+    return dists
 
 
 def top_distance(query: str, conn=None, embed_fn=None) -> float | None:
@@ -190,24 +210,48 @@ def retrieve(
         if exact:
             ranked = [exact] + [ck for ck in ranked if ck != exact]
 
-    ranked = _ensure_api_slots(ranked, pointers, k)
+    dists = _collect_distances([dense_rows, api_rows])
+    ranked = _ensure_api_slots(ranked, pointers, k, dists)
     return [pointers[chunk_key] for chunk_key in ranked[:k]]
 
 
 def _ensure_api_slots(
-    ranked: list[str], pointers: dict[str, dict], k: int, min_api: int = MIN_API_IN_TOP_K
+    ranked: list[str],
+    pointers: dict[str, dict],
+    k: int,
+    dists: dict[str, float] | None = None,
+    min_api: int = MIN_API_IN_TOP_K,
 ) -> list[str]:
-    """Guarantee reference pages a seat in the top-k.
+    """Guarantee QUALIFIED reference pages a seat in the top-k.
 
     Tutorials mention a topic many times and rank in every open channel, so a
     non-symbol question can fill the whole top-k with tutorial prose while the
     reference page — the canonical answer — sits just below the cut. When
     fewer than min_api reference (kind='api') pointers made the top-k, promote
     the best-ranked reference candidates over the lowest-ranked tutorials.
+
+    Qualification: a candidate is promoted only when its cosine distance is
+    within API_SLOT_MAX_GAP of the best result overall — a reference page that
+    is nearly as relevant as the top hit deserves a seat; one that merely won
+    the api channel by default does not (benchmark run 3: blind promotion put
+    torchaudio's RNNT page on an SGD question and displaced a real hit).
+    When no distance information is available (injected test rows), the gate
+    is open.
     """
+    dists = dists or {}
+    best = min(dists.values()) if dists else None
+
+    def qualified(ck: str) -> bool:
+        if best is None:
+            return True
+        d = dists.get(ck)
+        return d is not None and d <= best + API_SLOT_MAX_GAP
+
     top = ranked[:k]
     have = sum(1 for ck in top if pointers[ck].get("kind") == "api")
-    extras = [ck for ck in ranked[k:] if pointers[ck].get("kind") == "api"]
+    extras = [
+        ck for ck in ranked[k:] if pointers[ck].get("kind") == "api" and qualified(ck)
+    ]
     need = min(min_api - have, len(extras))
     if need <= 0:
         return ranked
