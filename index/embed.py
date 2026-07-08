@@ -56,12 +56,13 @@ def _gloss_stamp() -> str:
 
 # bump the version prefix when indexed_text()'s SHAPE changes → forces a
 # one-time full re-embed (dims same, so the row-skip check would otherwise keep
-# stale vectors). The model tag is folded in so swapping models is itself a
-# recipe change: a same-dims swap (e.g. two 768d models) still forces a
-# re-embed, and index_meta stays honest about which model's vectors are live
-# (a dims change also rebuilds the table outright — see index/db.ensure_schema).
-# The gloss stamp does the same for gloss-content changes.
-EMBED_RECIPE = f"v4-{EMBED_MODEL.split('/')[-1]}-g{_gloss_stamp()}"
+# stale vectors). v5: extracted page synopsis prepended to api chunks. The
+# model tag is folded in so swapping models is itself a recipe change: a
+# same-dims swap (e.g. two 768d models) still forces a re-embed, and index_meta
+# stays honest about which model's vectors are live (a dims change also
+# rebuilds the table outright — see index/db.ensure_schema). The gloss stamp
+# does the same for gloss-content changes.
+EMBED_RECIPE = f"v5-{EMBED_MODEL.split('/')[-1]}-g{_gloss_stamp()}"
 
 
 def chunk_key(unit: dict) -> str:
@@ -86,19 +87,22 @@ def symbol_from_url(url: str) -> str:
 
 
 def indexed_text(unit: dict) -> str:
-    """What we embed AND tsvector: symbol + gloss + heading path, then the body.
+    """What we embed AND tsvector: symbol + synopsis + gloss + heading + body.
 
-    The symbol gives the page strong lexical weight for symbol-typed queries;
-    the gloss (Contextual Retrieval) is the semantic bridge to descriptive
-    questions — reference pages' own text is signature-shaped and embeds far
-    from "which loss takes raw logits?", so the plain-language sentence is
-    prepended to every chunk of the page, feeding both the vector and the
-    tsvector.
+    The symbol gives the page strong lexical weight for symbol-typed queries.
+    The synopsis (the page's own first prose sentence, extracted at chunk time)
+    and the gloss (LLM-written, Contextual Retrieval) are the semantic bridge
+    to descriptive questions — reference pages' own text is signature-shaped
+    and embeds far from "which loss takes raw logits?", so the plain-language
+    sentences are prepended to every chunk of the page, feeding both the
+    vector and the tsvector.
     """
     parts = []
     symbol = symbol_from_url(unit["url"])
     if symbol:
         parts.append(symbol)
+    if unit.get("synopsis"):
+        parts.append(unit["synopsis"])
     gloss = load_glosses().get(unit["url"], "")
     if gloss:
         parts.append(gloss)

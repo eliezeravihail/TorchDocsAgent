@@ -52,6 +52,23 @@ def test_indexed_text_prepends_symbol_and_heading():
     assert "lr (float)" in text
 
 
+def test_indexed_text_prepends_the_extracted_synopsis():
+    # the page's own docstring summary (extracted at chunk time, no LLM) leads
+    # every chunk right after the symbol — the free half of the semantic bridge
+    from index.embed import indexed_text
+
+    unit = {
+        "url": "https://docs.pytorch.org/docs/stable/generated/torch.nn.CrossEntropyLoss.html",
+        "heading_path": ["CrossEntropyLoss", "Parameters"],
+        "synopsis": "This criterion computes the cross entropy loss between "
+                    "input logits and target.",
+        "content": "weight (Tensor) — a manual rescaling weight.",
+    }
+    text = indexed_text(unit)
+    assert text.index("torch.nn.CrossEntropyLoss") < text.index("This criterion")
+    assert text.index("This criterion") < text.index("CrossEntropyLoss > Parameters")
+
+
 def test_indexed_text_prepends_the_pages_gloss_when_present(monkeypatch):
     # Contextual Retrieval: the plain-language gloss is the semantic bridge
     # between a signature-shaped reference page and descriptive questions —

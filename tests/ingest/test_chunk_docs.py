@@ -68,6 +68,38 @@ def test_chunk_page_units_and_kind():
     assert page_kind("https://docs.pytorch.org/tutorials/beginner/intro.html") == "tutorial"
 
 
+def test_page_synopsis_finds_the_docstring_summary_sentence():
+    from ingest.chunk_docs import page_synopsis
+
+    body = (
+        "# torch.nn.CrossEntropyLoss\n\n"
+        "class torch.nn.CrossEntropyLoss(weight=None, size_average=None)\n\n"
+        "```python\nloss = nn.CrossEntropyLoss()\n```\n\n"
+        "This criterion computes the cross entropy loss between input logits "
+        "and target. It is useful when training classification problems.\n\n"
+        "## Parameters\n\n* weight (Tensor) — ..."
+    )
+    synopsis = page_synopsis(body)
+    # first PROSE sentence only: heading, signature, and code fence are skipped
+    assert synopsis == (
+        "This criterion computes the cross entropy loss between input logits and target."
+    )
+
+
+def test_page_synopsis_empty_when_page_has_no_prose():
+    from ingest.chunk_docs import page_synopsis
+
+    assert page_synopsis("# title\n\ntorch.add(input, other)\n\n* alpha — scale") == ""
+
+
+def test_chunk_page_attaches_synopsis_to_api_units_only():
+    units = chunk_page(META, PAGE_MD)
+    # every unit of the api page carries the page's summary sentence
+    assert all(u["synopsis"] == "Intro paragraph before any heading." for u in units)
+    tut_meta = {**META, "url": "https://docs.pytorch.org/tutorials/beginner/intro.html"}
+    assert all(u["synopsis"] == "" for u in chunk_page(tut_meta, PAGE_MD))
+
+
 def test_write_units_valid_okf(tmp_path):
     import yaml
 
