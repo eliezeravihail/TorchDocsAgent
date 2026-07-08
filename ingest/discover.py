@@ -92,9 +92,11 @@ def is_sitemap_index(xml_text: str) -> bool:
 
 
 FETCH_RETRIES = 3
-# a real doc page is tens of KB; anything near this is a mistake (a tarball
-# link, a runaway page) and would balloon memory across a thousands-page crawl
-MAX_PAGE_BYTES = 5 * 1024 * 1024
+# Guards against runaway bodies (a tarball link, a broken page) ballooning
+# memory across a thousands-page crawl. Generous on purpose: legitimate
+# tutorials with inline images (dcgan_faces, hybrid_demucs) run 5-10MB, and a
+# 5MB cap silently dropped them from the index on the 2026-07-08 build.
+MAX_PAGE_BYTES = 20 * 1024 * 1024
 
 
 def fetch(url: str, timeout: float = 30.0, retries: int = FETCH_RETRIES) -> bytes:
