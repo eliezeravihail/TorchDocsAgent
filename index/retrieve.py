@@ -1,4 +1,12 @@
-"""Hybrid retrieval over the chunks index: dense + keyword, RRF-merged.
+"""Hybrid retrieval over the chunks index: per-kind pools, seam-free by design.
+
+Each content kind (api / tutorial / guide) gets its own pool — dense +
+keyword, RRF-merged WITHIN the kind — so verbose tutorials can never crowd
+reference pages out of the results (and vice versa). A relevance threshold
+drops candidates far from the best hit, pools are interleaved strongest-first
+into the top-k, and the answering model judges what is actually relevant.
+This replaced a global-RRF design whose crowding fixes (a reference channel,
+reserved seats, distance gates) traded one benchmark regression for another.
 
 Returns POINTERS (url, anchor, heading path, ...) — never content. The
 caller hydrates content from the snapshot (index/hydrate.py). This is the
@@ -38,27 +46,14 @@ order by (kind = 'api') desc, length(url) asc
 limit %(pool)s
 """
 
-# reference channel: dense search restricted to kind='api'. Catalog/source
-# questions with no explicit symbol ("what loss functions exist?") drown in
-# tutorial prose on the open channels — tutorials say "loss function" a dozen
-# times, the reference page once. This channel guarantees reference candidates
-# reach the RRF pool at all; _ensure_api_slots below guarantees the best of
-# them survive into the returned top-k.
-API_DENSE_SQL = f"""
-select {POINTER_COLUMNS}, embedding <=> %(vector)s::vector as dist from chunks
-where kind = 'api' {{extra}}
-order by dist
-limit %(pool)s
-"""
+# the content spaces, each searched as its own pool (see ingest's page_kind)
+KINDS = ("api", "tutorial", "guide")
 
-# Reservation limits, tuned on the retrieval benchmark (2026-07-08): with 2
-# blind seats, promoted-but-irrelevant reference pages displaced a real hit at
-# rank 7 (q10 regressed 1.00→0.00) and junk (torchaudio RNNT for an SGD
-# question) got promoted. One seat, and only for a candidate whose cosine
-# distance is within API_SLOT_MAX_GAP of the best result — a reserved seat for
-# QUALIFIED references, not for whatever the api channel happened to rank.
-MIN_API_IN_TOP_K = 1
-API_SLOT_MAX_GAP = 0.10
+# a candidate whose cosine distance exceeds the best hit's by more than this
+# is junk that would only dilute the answer context — dropped before
+# interleaving. Keyword-only hits (no distance) are kept: an exact lexical
+# match on a rare term is a signal of its own.
+RELEVANCE_GAP = 0.15
 
 # a symbol-ish token: dotted/underscored identifier (torch.nn.functional.sdpa,
 # scaled_dot_product_attention). Bare words like "SGD" go through dense+keyword.
@@ -148,16 +143,21 @@ def retrieve(
     debug: bool = False,
     kind: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Top-k pointers for a query: dense (pgvector) + keyword (tsvector) via RRF.
+    """Top-k pointers for a query, drawn from per-kind pools.
 
-    `pool` candidates are taken from each modality before fusion — the classic
-    setup where keyword search rescues exact symbol names (e.g.
-    `scaled_dot_product_attention`) that dense similarity alone misses.
+    Each kind (api / tutorial / guide) is searched separately — dense
+    (pgvector) + keyword (tsvector), RRF-merged within the pool, `pool`
+    candidates per modality. Keyword search rescues exact symbol names
+    (e.g. `scaled_dot_product_attention`) that dense similarity misses.
 
-    `kind` restricts the search to one content space ('api' / 'tutorial' /
-    'guide'). The agent's planner sets it when it decides the question needs
-    the reference catalog rather than tutorial prose — the caller's judgment
-    replaces the api-channel/reservation heuristics, which are skipped.
+    Candidates farther than RELEVANCE_GAP from the best hit are dropped, then
+    the pools are interleaved (strongest pool first) into the top-k, so every
+    relevant content space is represented and none can crowd out another. An
+    exact-symbol match is pinned first, docs-search style.
+
+    `kind` restricts the search to one content space — the agent's planner
+    sets it when it decides the question needs the reference catalog rather
+    than tutorial prose.
     """
     from contextlib import nullcontext
 
@@ -169,114 +169,112 @@ def retrieve(
     # return it on exit. An injected conn (tests, the batch build) is used as-is
     # and left open for its owner to manage.
     ctx = nullcontext(conn) if conn is not None else get_pool().connection()
+    kinds = (kind,) if kind else KINDS
+    pools: list[tuple[str, list[str]]] = []  # (pool name, ranked chunk_keys)
+    pointers: dict[str, dict[str, Any]] = {}
+    dists: dict[str, float] = {}
+
     with ctx as conn:
-        params: dict[str, Any] = {"pool": pool, "query": query}
-        conditions = []
+        base: dict[str, Any] = {"pool": pool, "query": query, "vector": str(embed_fn(query))}
+        conditions = ["kind = %(kind)s"]
         if library:
             conditions.append("library = %(library)s")
-            params["library"] = library
-        if kind:
-            conditions.append("kind = %(kind)s")
-            params["kind"] = kind
-        where = ("where " + " and ".join(conditions)) if conditions else ""
+            base["library"] = library
+        where = "where " + " and ".join(conditions)
         extra = "".join(f"and {c} " for c in conditions)
 
-        params["vector"] = str(embed_fn(query))
-        dense_rows = conn.execute(DENSE_SQL.format(where=where), params).fetchall()
-        keyword_rows = conn.execute(KEYWORD_SQL.format(extra=extra), params).fetchall()
-        # an explicit kind makes the reference channel redundant (kind='api')
-        # or contradictory (kind='tutorial') — the caller chose the space
-        api_rows: list[tuple] = []
-        if kind is None:
-            api_rows = conn.execute(API_DENSE_SQL.format(extra=extra), params).fetchall()
+        for kd in kinds:
+            params = {**base, "kind": kd}
+            dense_rows = conn.execute(DENSE_SQL.format(where=where), params).fetchall()
+            keyword_rows = conn.execute(KEYWORD_SQL.format(extra=extra), params).fetchall()
+            pointers |= _rows_to_pointers(dense_rows) | _rows_to_pointers(keyword_rows)
+            dists |= _collect_distances([dense_rows])
+            scores = rrf_merge(
+                [[r[0] for r in dense_rows], [r[0] for r in keyword_rows]]
+            )
+            pools.append((kd, sorted(scores, key=scores.get, reverse=True)))
 
-        symbol_rows: list[tuple] = []
         symbol = extract_symbol(query)
         if symbol:
             # escape ILIKE wildcards so a literal % or _ in the query matches
             # itself instead of acting as a pattern (backslash is the default
             # escape character in Postgres LIKE/ILIKE)
             escaped = symbol.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
-            params["sym"] = f"%{escaped}%"
-            symbol_rows = conn.execute(SYMBOL_SQL.format(extra=extra), params).fetchall()
+            sym_extra = "".join(
+                f"and {c} " for c in conditions if not c.startswith("kind") or kind
+            )
+            params = {**base, "sym": f"%{escaped}%", "kind": kind}
+            symbol_rows = conn.execute(SYMBOL_SQL.format(extra=sym_extra), params).fetchall()
+            pointers |= _rows_to_pointers(symbol_rows)
+            # the symbol pool leads the interleave: an explicit identifier is
+            # the strongest possible signal of what the user wants
+            pools.insert(0, ("symbol", [r[0] for r in symbol_rows]))
 
-    channels = [
-        ("dense", dense_rows),
-        ("keyword", keyword_rows),
-        ("api", api_rows),
-        ("symbol", symbol_rows),
-    ]
     if debug:
-        for name, rows in channels:
-            print(f"[debug] {name}: {len(rows)} candidates")
-            for row in rows[:3]:
-                print(f"[debug]   {row[4]} | {row[1]}")
+        for name, ranked in pools:
+            print(f"[debug] pool {name}: {len(ranked)} candidates")
+            for ck in ranked[:3]:
+                print(f"[debug]   {pointers[ck]['heading_path']} | {pointers[ck]['url']}")
 
-    pointers: dict[str, dict[str, Any]] = {}
-    for _, rows in channels:
-        pointers |= _rows_to_pointers(rows)
-    scores = rrf_merge([[r[0] for r in rows] for _, rows in channels])
-    ranked = sorted(scores, key=scores.get, reverse=True)
+    ranked = _interleave_pools(pools, dists, k)
 
     # exact API lookup: if the user typed a precise symbol and its reference
     # page was found, pin it first — the docs-search behavior users expect
     if symbol:
-        exact = next((ck for ck in ranked if is_exact_api(pointers[ck], symbol)), None)
+        exact = next(
+            (ck for kd, pl in pools for ck in pl if is_exact_api(pointers[ck], symbol)),
+            None,
+        )
         if exact:
             ranked = [exact] + [ck for ck in ranked if ck != exact]
 
-    if kind is None:  # with an explicit kind the caller already chose the space
-        dists = _collect_distances([dense_rows, api_rows])
-        ranked = _ensure_api_slots(ranked, pointers, k, dists)
     return [pointers[chunk_key] for chunk_key in ranked[:k]]
 
 
-def _ensure_api_slots(
-    ranked: list[str],
-    pointers: dict[str, dict],
-    k: int,
-    dists: dict[str, float] | None = None,
-    min_api: int = MIN_API_IN_TOP_K,
+def _interleave_pools(
+    pools: list[tuple[str, list[str]]], dists: dict[str, float], k: int
 ) -> list[str]:
-    """Guarantee QUALIFIED reference pages a seat in the top-k.
+    """Merge per-kind rankings into one top-k, round-robin, strongest pool first.
 
-    Tutorials mention a topic many times and rank in every open channel, so a
-    non-symbol question can fill the whole top-k with tutorial prose while the
-    reference page — the canonical answer — sits just below the cut. When
-    fewer than min_api reference (kind='api') pointers made the top-k, promote
-    the best-ranked reference candidates over the lowest-ranked tutorials.
-
-    Qualification: a candidate is promoted only when its cosine distance is
-    within API_SLOT_MAX_GAP of the best result overall — a reference page that
-    is nearly as relevant as the top hit deserves a seat; one that merely won
-    the api channel by default does not (benchmark run 3: blind promotion put
-    torchaudio's RNNT page on an SGD question and displaced a real hit).
-    When no distance information is available (injected test rows), the gate
-    is open.
+    The relevance threshold runs here: candidates farther than RELEVANCE_GAP
+    from the best hit overall are dropped (keyword-only candidates carry no
+    distance and are kept). Round-robin guarantees every surviving space a
+    share of the k seats; ordering pools by their best distance keeps the most
+    relevant kind in front, so a tutorial-shaped question still leads with
+    tutorials. The answering model does the final relevance judgment.
     """
-    dists = dists or {}
-    best = min(dists.values()) if dists else None
+    best = min(dists.values(), default=None)
 
-    def qualified(ck: str) -> bool:
-        if best is None:
-            return True
+    def relevant(ck: str) -> bool:
         d = dists.get(ck)
-        return d is not None and d <= best + API_SLOT_MAX_GAP
+        return best is None or d is None or d <= best + RELEVANCE_GAP
 
-    top = ranked[:k]
-    have = sum(1 for ck in top if pointers[ck].get("kind") == "api")
-    extras = [
-        ck for ck in ranked[k:] if pointers[ck].get("kind") == "api" and qualified(ck)
-    ]
-    need = min(min_api - have, len(extras))
-    if need <= 0:
-        return ranked
-    # drop the lowest-ranked non-reference entries to make room, keep order
-    to_drop: list[str] = []
-    for ck in reversed(top):
-        if len(to_drop) == need:
-            break
-        if pointers[ck].get("kind") != "api":
-            to_drop.append(ck)
-    new_top = [ck for ck in top if ck not in to_drop] + extras[:need]
-    return new_top + [ck for ck in ranked if ck not in new_top]
+    def pool_strength(ranked: list[str]) -> float:
+        known = [dists[ck] for ck in ranked if ck in dists]
+        return min(known) if known else float("inf")
+
+    filtered = [(name, [ck for ck in ranked if relevant(ck)]) for name, ranked in pools]
+    # the symbol pool (if present) was inserted first and stays first; the
+    # kind pools compete on the strength of their best surviving candidate
+    lead = [p for p in filtered if p[0] == "symbol"]
+    rest = sorted((p for p in filtered if p[0] != "symbol"), key=lambda p: pool_strength(p[1]))
+    ordered = [ranked for _, ranked in lead + rest]
+
+    out: list[str] = []
+    seen: set[str] = set()
+    positions = [0] * len(ordered)
+    progressed = True
+    while len(out) < k and progressed:
+        progressed = False
+        for i, ranked in enumerate(ordered):
+            while positions[i] < len(ranked) and ranked[positions[i]] in seen:
+                positions[i] += 1
+            if positions[i] < len(ranked):
+                ck = ranked[positions[i]]
+                positions[i] += 1
+                seen.add(ck)
+                out.append(ck)
+                progressed = True
+                if len(out) == k:
+                    break
+    return out
