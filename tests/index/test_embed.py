@@ -52,6 +52,36 @@ def test_indexed_text_prepends_symbol_and_heading():
     assert "lr (float)" in text
 
 
+def test_indexed_text_prepends_the_pages_gloss_when_present(monkeypatch):
+    # Contextual Retrieval: the plain-language gloss is the semantic bridge
+    # between a signature-shaped reference page and descriptive questions —
+    # it must land in indexed_text (→ both the vector and the tsvector)
+    from index.embed import indexed_text
+
+    url = "https://docs.pytorch.org/docs/stable/generated/torch.optim.SGD.html"
+    gloss = "Stochastic gradient descent optimizer with optional momentum."
+    monkeypatch.setattr("index.embed.load_glosses", lambda: {url: gloss})
+    unit = {"url": url, "heading_path": ["torch.optim.SGD"], "content": "lr (float)"}
+    text = indexed_text(unit)
+    assert gloss in text
+    assert text.index("torch.optim.SGD") < text.index(gloss) < text.index("lr (float)")
+    # a page with no gloss is unchanged
+    assert gloss not in indexed_text({**unit, "url": url.replace("SGD", "Adam")})
+
+
+def test_gloss_stamp_changes_the_recipe_with_gloss_content(monkeypatch, tmp_path):
+    # any change to the committed gloss file must force the one-time full
+    # re-embed by itself — a stale recipe would silently keep old vectors
+    from index import embed
+
+    monkeypatch.setattr(embed, "GLOSSES_PATH", tmp_path / "glosses.jsonl")
+    assert embed._gloss_stamp() == "none"
+    embed.GLOSSES_PATH.write_text('{"url": "u", "gloss": "g"}\n')
+    first = embed._gloss_stamp()
+    embed.GLOSSES_PATH.write_text('{"url": "u", "gloss": "different"}\n')
+    assert first not in ("none", embed._gloss_stamp())
+
+
 def test_iter_corpus_units_walks_snapshot(tmp_path):
     save_page("https://docs.pytorch.org/docs/stable/optim.html", "core", HTML, tmp_path)
     units = list(iter_corpus_units(tmp_path))
