@@ -161,10 +161,11 @@ def _ref_row(key):
     return (key, url, "", "", "", "core", "api", "", 0)
 
 
-def test_reference_pages_get_seats_when_tutorials_fill_the_topk():
+def test_reference_pages_get_a_seat_when_tutorials_fill_the_topk():
     # a catalog question with no symbol: tutorials rank in BOTH open channels
     # and would fill all of top-k; the api channel + slot reservation must put
-    # the best reference pages in anyway
+    # the best reference page in anyway (ONE seat — benchmark run 3 showed two
+    # blind seats displace real hits at the tail)
     tutorials = [_tut_row(f"tut{i}") for i in range(8)]
     api = [_ref_row("CrossEntropyLoss"), _ref_row("NLLLoss"), _ref_row("MSELoss")]
     conn = FakeConn([tutorials, tutorials, api])
@@ -174,8 +175,8 @@ def test_reference_pages_get_seats_when_tutorials_fill_the_topk():
     )
     keys = [r["chunk_key"] for r in results]
     assert len(keys) == 4
-    # the two best-ranked reference pages made it in, in channel order
-    assert "CrossEntropyLoss" in keys and "NLLLoss" in keys
+    assert "CrossEntropyLoss" in keys  # the best-ranked reference got the seat
+    assert "NLLLoss" not in keys  # exactly one seat — the tail is not flooded
     # and the top tutorials survived — reservation replaces the tail, not the head
     assert keys[0] == "tut0"
 
@@ -194,3 +195,35 @@ def test_reservation_never_invents_candidates():
     conn = FakeConn([tutorials, [], []])
     results = retrieve("how to train", k=3, conn=conn, embed_fn=lambda q: [0.0] * 384)
     assert all(r["kind"] == "tutorial" for r in results)
+
+
+def _dist_row(row, dist):
+    return (*row, dist)
+
+
+def test_far_references_are_not_promoted():
+    # the api channel always returns SOMETHING; a candidate much farther than
+    # the best hit is noise (an RNNT page on an SGD question) and must not
+    # displace a real result from the tail
+    tutorials = [_dist_row(_tut_row(f"tut{i}"), 0.20 + i * 0.01) for i in range(8)]
+    api = [_dist_row(_ref_row("UnrelatedThing"), 0.55)]  # far beyond best+0.10
+    conn = FakeConn([tutorials, tutorials, api])
+    results = retrieve(
+        "how do I fine tune a model", k=4, conn=conn, embed_fn=lambda q: [0.0] * 384
+    )
+    keys = [r["chunk_key"] for r in results]
+    assert "UnrelatedThing" not in keys
+    assert keys == ["tut0", "tut1", "tut2", "tut3"]  # tail untouched
+
+
+def test_close_references_are_promoted():
+    # a reference nearly as close as the best hit deserves its seat
+    tutorials = [_dist_row(_tut_row(f"tut{i}"), 0.20 + i * 0.01) for i in range(8)]
+    api = [_dist_row(_ref_row("torch.no_grad"), 0.24)]  # within best+0.10
+    conn = FakeConn([tutorials, tutorials, api])
+    results = retrieve(
+        "when should I disable gradients", k=4, conn=conn, embed_fn=lambda q: [0.0] * 384
+    )
+    keys = [r["chunk_key"] for r in results]
+    assert "torch.no_grad" in keys
+    assert keys[:3] == ["tut0", "tut1", "tut2"]  # only the last seat was used
