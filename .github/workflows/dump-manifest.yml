@@ -1,0 +1,35 @@
+name: Dump index manifest
+
+# Dump a verified manifest of every page in the live index (url / kind /
+# library / title / headings) and commit it. The eval question sets are built
+# from this ground truth so no page or symbol is invented from memory. Runs in
+# Actions because the dev sandbox can't reach Neon.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -e .
+      - name: Dump manifest
+        env:
+          PYTHONUNBUFFERED: "1"
+          NEON_URL: ${{ secrets.NEON }}
+        run: python scripts/dump_index_manifest.py
+      - name: Commit manifest back to the branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f eval/index_manifest.jsonl
+          git diff --cached --quiet || git commit -m "eval: index manifest from Actions run [skip ci]"
+          git push
