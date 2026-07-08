@@ -156,6 +156,36 @@ def page_kind(url: str) -> str:
     return "guide"
 
 
+# a signature-shaped paragraph: `class torch.nn.Linear(...)`, `torch.add(...)`
+_SIGNATURE_START_RE = re.compile(r"^(class\s+|@)?[\w.]+\(")
+_SENTENCE_RE = re.compile(r"(.+?[.!?])(?:\s|$)")
+SYNOPSIS_MAX_CHARS = 240
+
+
+def page_synopsis(body: str, limit: int = SYNOPSIS_MAX_CHARS) -> str:
+    """The page's own first prose sentence — the docstring summary a human wrote.
+
+    Reference pages are signature/parameter-shaped, so their embedding sits far
+    from descriptive questions even though the description sentence ("This
+    criterion computes the cross entropy loss between input logits and target")
+    usually exists — buried. Extracting it deterministically (no LLM, no quota,
+    no hallucination) lets indexed_text() lead every chunk of the page with it.
+    """
+    text = _FENCE_RE.sub("", body)
+    for para in text.split("\n\n"):
+        flat = " ".join(para.split())
+        # strip markdown emphasis/links noise for shape checks, keep the text
+        if not flat or flat.startswith("#") or flat.startswith("["):
+            continue
+        if _SIGNATURE_START_RE.match(flat):
+            continue
+        if len(flat.split()) < 5:  # crumbs like "Parameters" or a bare type
+            continue
+        match = _SENTENCE_RE.match(flat)
+        return (match.group(1) if match else flat)[:limit]
+    return ""
+
+
 def chunk_page(meta: dict, body: str) -> list[dict]:
     """One snapshot page → list of OKF-unit dicts (frontmatter fields + content).
 
@@ -164,6 +194,10 @@ def chunk_page(meta: dict, body: str) -> list[dict]:
     citation), and carries a `part` ordinal that makes its identity unique.
     """
     units = []
+    kind = page_kind(meta["url"])
+    # api pages only: tutorials/guides already retrieve well, and their first
+    # sentence is prose anyway — the synopsis is the terse pages' rescue line
+    synopsis = page_synopsis(body) if kind == "api" else ""
     for section in split_by_heading(body):
         if not section.text:
             continue
@@ -175,10 +209,11 @@ def chunk_page(meta: dict, body: str) -> list[dict]:
                     "page_title": meta.get("title", ""),
                     "heading_path": section.heading_path,
                     "library": meta.get("library", ""),
-                    "kind": page_kind(meta["url"]),
+                    "kind": kind,
                     "source_link": section.source_link,
                     "content_hash": meta.get("content_hash", ""),
                     "part": part,
+                    "synopsis": synopsis,
                     "content": content,
                 }
             )
