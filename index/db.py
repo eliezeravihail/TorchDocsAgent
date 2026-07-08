@@ -19,7 +19,40 @@ from functools import cache
 
 import psycopg
 
-EMBED_DIMS = 384  # BAAI/bge-small-en-v1.5 — local CPU model, no API quota
+# Embedding width, derived from the model so it can't drift from index/embed.py.
+# bge-base-en-v1.5 (768d) resolves finer semantic distinctions than bge-small
+# (384d) — a "loss function" question lands nearer the reference page instead
+# of tutorial prose — at ~4x the model size, still local/CPU/free. A model not
+# in the table needs TORCHDOCS_EMBED_DIMS set. Changing dims rebuilds the
+# chunks table automatically (see ensure_schema).
+_MODEL_DIMS = {
+    "BAAI/bge-small-en-v1.5": 384,
+    "BAAI/bge-base-en-v1.5": 768,
+    "BAAI/bge-large-en-v1.5": 1024,
+}
+_DEFAULT_EMBED_MODEL = "BAAI/bge-base-en-v1.5"
+
+
+def embed_dims() -> int:
+    """The embedding width for the configured model.
+
+    Reads the same env var as index/embed.py's EMBED_MODEL, so the schema
+    width and the vectors written into it can never disagree. An override
+    (TORCHDOCS_EMBED_DIMS) covers a model not in the table; an unknown model
+    with no override is a loud config error, not a silently wrong-width table.
+    """
+    override = os.environ.get("TORCHDOCS_EMBED_DIMS")
+    if override:
+        return int(override)
+    model = os.environ.get("TORCHDOCS_EMBED_MODEL", _DEFAULT_EMBED_MODEL)
+    if model not in _MODEL_DIMS:
+        raise RuntimeError(
+            f"unknown embed model {model!r}; set TORCHDOCS_EMBED_DIMS to its width"
+        )
+    return _MODEL_DIMS[model]
+
+
+EMBED_DIMS = embed_dims()
 
 SCHEMA = f"""
 create extension if not exists vector;

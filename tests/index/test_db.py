@@ -124,3 +124,29 @@ def test_ensure_schema_applies_runtime_migrations():
     # SCHEMA must already contain each migrated column for fresh tables
     assert any("part" in m for m in RUNTIME_MIGRATIONS)
     assert "part" in SCHEMA
+
+
+def test_embed_dims_derives_from_the_model(monkeypatch):
+    from index.db import embed_dims
+
+    # dims track the model, so db.py and index/embed.py can't drift apart
+    monkeypatch.delenv("TORCHDOCS_EMBED_DIMS", raising=False)
+    monkeypatch.setenv("TORCHDOCS_EMBED_MODEL", "BAAI/bge-base-en-v1.5")
+    assert embed_dims() == 768
+    monkeypatch.setenv("TORCHDOCS_EMBED_MODEL", "BAAI/bge-small-en-v1.5")
+    assert embed_dims() == 384
+
+
+def test_embed_dims_unknown_model_needs_an_override(monkeypatch):
+    import pytest
+
+    from index.db import embed_dims
+
+    monkeypatch.delenv("TORCHDOCS_EMBED_DIMS", raising=False)
+    monkeypatch.setenv("TORCHDOCS_EMBED_MODEL", "some/unknown-embedder")
+    # an unknown model with no override is a config error, not a silent
+    # wrong-width table
+    with pytest.raises(RuntimeError, match="unknown embed model"):
+        embed_dims()
+    monkeypatch.setenv("TORCHDOCS_EMBED_DIMS", "512")
+    assert embed_dims() == 512
