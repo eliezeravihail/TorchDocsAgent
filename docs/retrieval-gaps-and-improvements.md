@@ -101,16 +101,20 @@ reranker הוא הצעד הבא הטבעי כשלב precision; אם לא — HyD
 **קיים:** recall/MRR ל־retrieval, ו־static checks (`eval/checks.py`: parse,
 imports, symbols-in-index).
 
-**חסר:** מדד אוטומטי ל**נכונות ונאמנות התשובה עצמה**. RAGAS מסומן STRETCH;
-LLM-as-judge לא קיים.
+**נסגר (2026-07-08):** נוסף LLM-as-judge על **הנתיב הגראונדד** —
+`eval/run_judge.py`, כפתור `suite=judge` ב־`Eval`. שלושה ציונים ‎[0,1]
+לכל שאלה: **faithfulness** (כל טענה נתמכת ב־context שהוצג),
+**answer-relevance**, **citation-correctness**. השופט רואה את *אותו* context
+ממוספר שהמחולל ראה (לא re-retrieval), התוצאות נשמרות ל־`eval/results/judge_*`
+עם aggregate before/after. RAGAS נשאר STRETCH.
 
 **למה זה חשוב:** בלי faithfulness / answer-correctness אוטומטי, רגרסיות
 מתגלות רק ידנית. זה הפער בין "פרויקט מרשים" ל"מערכת שאפשר לתחזק". **ה־eval
 הוא המוצר.**
 
-**הצעה:** LLM-judge קל על סט ה־40 שאלות (M4) — שלושה ציונים: faithfulness
-(האם כל טענה נתמכת ב־context), answer-relevance, citation-correctness.
-מריצים ב־Actions, שומרים ל־`eval/results/`, ומקבלים before/after לכל שינוי.
+**מה שנותר:** (א) להריץ baseline ולתעד מספרים; (ב) מגבלה מדועת — כשהשופט
+הוא אותו מודל חינמי שכתב את התשובה יש הטיית סלחנות, אז להצביע מפתח על מודל
+שופט חזק יותר; (ג) להרחיב מהנתיב הגראונדד לנתיב האג׳נטי.
 
 ## 3. ניהול קונטקסט — precision מעל recall במה שמזינים ל־LLM
 

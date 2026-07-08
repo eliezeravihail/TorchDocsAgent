@@ -6,7 +6,9 @@ name: Eval
 #     pages actually sit in their kind-pool). No LLM needed.
 #   suite=agentic — the agent-loop benchmark (loop vs single-shot coverage
 #     delta). Needs LLM keys; slow on free tiers.
-#   suite=all — both.
+#   suite=judge — LLM-as-judge answer quality (faithfulness / relevance /
+#     citation-correctness) over the grounded path. Needs LLM keys.
+#   suite=all — all three.
 # Results are committed back to main for before/after diffing.
 on:
   workflow_dispatch:
@@ -14,7 +16,7 @@ on:
       suite:
         description: "what to measure"
         type: choice
-        options: [retrieval, agentic, all]
+        options: [retrieval, agentic, judge, all]
         default: retrieval
       set:
         description: "retrieval eval set (v1 = 100 questions, v0 = original 13)"
@@ -26,20 +28,24 @@ on:
         type: string
         default: "BAAI/bge-small-en-v1.5"
       provider:
-        description: "agentic only: LLM provider (gemini free = 20 req/day per
-          model; OpenRouter free = 50/day without credits; failures fall
-          through to the other provider)"
+        description: "agentic/judge: LLM provider (gemini free = 20 req/day per
+          model; OpenRouter free = 50/day without credits, far higher with
+          credit; failures fall through to the other provider)"
         type: choice
         options: [gemini, openai-compat]
         default: gemini
       llm:
-        description: "agentic only: OpenRouter slugs (fallback chain)"
+        description: "agentic/judge: OpenRouter slugs (fallback chain)"
         type: string
-        default: "tencent/hy3:free,meta-llama/llama-3.3-70b-instruct:free,google/gemini-2.0-flash-exp:free"
+        default: "tencent/hy3:free,meta-llama/llama-3.3-70b-instruct:free"
       limit:
         description: "agentic only: first N questions (0 = all 20)"
         type: string
         default: "6"
+      judge_limit:
+        description: "judge only: first N questions of the set (0 = all)"
+        type: string
+        default: "10"
 
 permissions:
   contents: write
@@ -117,5 +123,43 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -f eval/results/agentic_v1*.jsonl
           git diff --cached --quiet || git commit -m "eval: agentic results from Actions run [skip ci]"
+          git pull --rebase origin main  # main may have moved during the run
+          git push
+
+  judge:
+    if: ${{ inputs.suite == 'judge' || inputs.suite == 'all' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Restore embedding model
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-${{ inputs.model }}
+      - run: pip install -e .
+      - name: Judge answer quality (faithfulness / relevance / citations)
+        env:
+          PYTHONUNBUFFERED: "1"
+          NEON_URL: ${{ secrets.NEON }}
+          TORCHDOCS_PROVIDER: ${{ inputs.provider }}
+          GEMINI_API_KEY: ${{ secrets.GOOGLE_API }}
+          TORCHDOCS_EMBED_MODEL: ${{ inputs.model }}
+          OPENAI_COMPAT_BASE_URL: https://openrouter.ai/api/v1
+          OPENAI_COMPAT_API_KEY: ${{ secrets.OPENROUTER }}
+          TORCHDOCS_OPENAI_COMPAT_MODEL: ${{ inputs.llm }}
+          TORCHDOCS_EVAL_SET: ${{ inputs.set }}
+          TORCHDOCS_JUDGE_LIMIT: ${{ inputs.judge_limit }}
+        run: python -m eval.run_judge
+      - name: Commit results back to the branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f eval/results/judge_*.jsonl
+          git diff --cached --quiet || git commit -m "eval: judge results from Actions run [skip ci]"
           git pull --rebase origin main  # main may have moved during the run
           git push

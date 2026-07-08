@@ -33,9 +33,11 @@ ANTHROPIC_MODEL = os.environ.get("TORCHDOCS_ANTHROPIC_MODEL", "claude-sonnet-5")
 # invalid slug is the classic "OpenRouter never answers" bug — every call 404s.
 # deepseek-chat-v3-0324:free was retired to paid-only (404 as of 2026-07-08) —
 # a dead slug at the head of the chain costs a wasted call per request.
+# hy3 leads: with OpenRouter credit its free-tier daily cap is far wider than
+# gemini's 20/day, so it carries the deployment; llama-3.3-70b is the fallback.
 DEFAULT_COMPAT_MODELS = (
-    "meta-llama/llama-3.3-70b-instruct:free,"
-    "google/gemini-2.0-flash-exp:free"
+    "tencent/hy3:free,"
+    "meta-llama/llama-3.3-70b-instruct:free"
 )
 OPENAI_COMPAT_MODEL = os.environ.get("TORCHDOCS_OPENAI_COMPAT_MODEL", DEFAULT_COMPAT_MODELS)
 

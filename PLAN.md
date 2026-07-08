@@ -127,6 +127,10 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
   ✔ Done when: a failed run can be opened in the UI and you can see which tool call or step broke, and what each tool returned.
 - [ ] [CORE] Expand the eval set to **40 questions** in `eval/questions_v1.jsonl`, each with: question, type (usage/catalog/recipe/source/edge), and an automatic assertion (e.g. "the answer must mention ≥5 scheduler classes", "must cite the DataLoader page", "must include a referral, not a fabricated answer").
   ✔ Done when: `eval/run_v1.py` runs all of them and prints: pass rate, grounded_api_rate, citation-validity rate, average cost and latency.
+- [x] [CORE] Answer-quality eval (LLM-as-judge): `eval/run_judge.py` scores every grounded answer on faithfulness / answer-relevance / citation-correctness (1–5 → [0,1]) against the same context the answer saw; wired into the `Eval` workflow as `suite=judge`, results → `eval/results/judge_*.jsonl` for before/after.
+  ✔ Done when: a run prints per-dimension + overall aggregates; pure parts unit-tested. (See `docs/retrieval-gaps-and-improvements.md` §2.)
+- [ ] [CORE] **Pick a dedicated judge model** (not the free model that also writes the answers): judging with the same model biases toward leniency, so the current score is a relative regression gauge, not an absolute grade. Point a separate `TORCHDOCS_*` provider/key at a stronger judge (e.g. a paid Anthropic/OpenAI model) and re-baseline.
+  ✔ Done when: the judge provider is configurable independently of the answer provider, and a before/after baseline is recorded with the stronger judge.
 - [ ] [CORE] Error taxonomy: classify every failure into one of 4 categories (fake API / missed retrieval / bluffed instead of referring out / wrong citation), log it in MLflow, and write `docs/error-analysis.md` (OKF unit: frontmatter with `category`, `count`, `eval_version`) with 3 conclusions and one improvement actually implemented.
   ✔ Done when: there is a measurable before/after for at least one improvement.
 - [ ] [CORE] Cache in Upstash Redis: exact-match on (question, index version) for answers, and a cache for query embeddings.
