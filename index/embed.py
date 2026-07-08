@@ -56,13 +56,15 @@ def _gloss_stamp() -> str:
 
 # bump the version prefix when indexed_text()'s SHAPE changes → forces a
 # one-time full re-embed (dims same, so the row-skip check would otherwise keep
-# stale vectors). v5: extracted page synopsis prepended to api chunks. The
-# model tag is folded in so swapping models is itself a recipe change: a
-# same-dims swap (e.g. two 768d models) still forces a re-embed, and index_meta
-# stays honest about which model's vectors are live (a dims change also
-# rebuilds the table outright — see index/db.ensure_schema). The gloss stamp
-# does the same for gloss-content changes.
-EMBED_RECIPE = f"v5-{EMBED_MODEL.split('/')[-1]}-g{_gloss_stamp()}"
+# stale vectors). v6: synopsis extraction fixed to read the Sphinx <dl>
+# description line — v5 accidentally extracted the signature+github-url head,
+# duplicating the chunk's own opening (a semantic no-op, measured: distances
+# unchanged to 3 decimals). The model tag is folded in so swapping models is
+# itself a recipe change: a same-dims swap (e.g. two 768d models) still forces
+# a re-embed, and index_meta stays honest about which model's vectors are live
+# (a dims change also rebuilds the table outright — see index/db.ensure_schema).
+# The gloss stamp does the same for gloss-content changes.
+EMBED_RECIPE = f"v6-{EMBED_MODEL.split('/')[-1]}-g{_gloss_stamp()}"
 
 
 def chunk_key(unit: dict) -> str:
