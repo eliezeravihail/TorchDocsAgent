@@ -20,6 +20,9 @@ on:
   schedule:
     - cron: "0 3 * * 5" # weekly recrawl, Fridays 03:00 UTC
 
+permissions:
+  contents: write # the inventory job commits the refreshed dumps
+
 concurrency: build-index # never two index builds at once
 
 jobs:
@@ -54,3 +57,36 @@ jobs:
           ARGS=""
           if [ -n "${{ inputs.libraries }}" ]; then ARGS="--libraries ${{ inputs.libraries }}"; fi
           python scripts/build_index.py $ARGS
+
+  # refresh the eval ground truth right after every (re)build, so the committed
+  # inventory/manifest/coverage always describe the index that is actually live
+  inventory:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -e .
+      - name: Dump the docs-site inventory (external ground truth)
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: python scripts/dump_docs_inventory.py
+      - name: Dump the index manifest (what we actually hold)
+        env:
+          PYTHONUNBUFFERED: "1"
+          NEON_URL: ${{ secrets.NEON }}
+        run: python scripts/dump_index_manifest.py
+      - name: Coverage gap (docs pages missing from our index)
+        run: python scripts/coverage_diff.py
+      - name: Commit both dumps back to the branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f eval/docs_inventory.jsonl eval/index_manifest.jsonl
+          git diff --cached --quiet || git commit -m "eval: docs inventory + index manifest from Actions [skip ci]"
+          git pull --rebase origin main  # main may have moved during the run
+          git push
