@@ -73,7 +73,7 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
   ✔ Done when: searching `scaled_dot_product_attention` returns the pointer to its API-reference section as the top result (dense alone fails this — that's the test).
 - [ ] [CORE] `index/hydrate.py`: read content from the crawl snapshot — section-level (for `search_docs` results) and whole-page (for `read_page`), with an outline-first guardrail for oversized pages.
   ✔ Done when: hydrating a retrieve result returns exactly the section, a whole-page hydrate returns clean markdown, and a test confirms the metadata matches the snapshot content.
-- [ ] [STRETCH] reranker (small cross-encoder or LLM-rerank) over the top-20.
+- [x] [STRETCH] reranker (small cross-encoder or LLM-rerank) over the top-20. Done 2026-07-09: `index/rerank.py` — CPU cross-encoder (ms-marco-MiniLM-L-6-v2) reorders a 24-candidate slate into the top-k inside `retrieve()`, scoring symbol+title+heading+gloss; fail-open, kill switch `TORCHDOCS_RERANK`. Before/after lands with the next `Eval suite=retrieval` run.
 
 ### 2.4 Wiring and evaluation
 - [ ] [CORE] Update `answer_question`: retrieve → hydrate → inject the sections into the prompt with an explicit instruction "answer only from the provided context; if it's not there, say so and refer via the `[source]`/search link", and add `citations: list[{url, anchor, page_title}]` + `referrals: list[{url, reason}]` to the schema.
