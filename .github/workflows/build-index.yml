@@ -1,9 +1,16 @@
 name: Build Index
 
-# Full pipeline on GitHub's runners: discover → crawl → chunk+embed into Neon.
+# Full pipeline on GitHub's runners: discover → crawl → gloss new pages → embed.
 # Also serves as the weekly scheduled recrawl from the plan: the snapshot is
 # cached between runs, page hash-diff + DB chunk-hash skip make repeat runs
 # cheap, and every embed batch commits — a re-run always resumes.
+#
+# Glossing is folded INTO the update so new information never drifts out of sync
+# with its Contextual-Retrieval glosses: we crawl first (no embed), gloss only
+# the pages that don't have a gloss yet (incremental — the existing ones are
+# skipped, so a typical recrawl glosses just the few new pages), then embed once
+# with the glosses in indexed_text. A changed glosses.jsonl bumps the embed
+# recipe, so the embed step re-embeds exactly what the new glosses touched.
 on:
   workflow_dispatch:
     inputs:
@@ -17,6 +24,16 @@ on:
           index. Query side (eval/diagnose/app) must be run with the same model."
         type: string
         default: "BAAI/bge-small-en-v1.5"
+      provider:
+        description: "gloss LLM provider for new pages (openai-compat = OpenRouter/hy3
+          with credit; gemini free = 20/day per model). Falls through to the other."
+        type: choice
+        options: [openai-compat, gemini]
+        default: openai-compat
+      llm:
+        description: "OpenRouter slugs for glossing (fallback chain)"
+        type: string
+        default: "tencent/hy3:free,meta-llama/llama-3.3-70b-instruct:free"
   schedule:
     - cron: "0 3 * * 5" # weekly recrawl, Fridays 03:00 UTC
 
@@ -47,16 +64,40 @@ jobs:
           path: ~/.cache/huggingface
           key: hf-${{ inputs.model || 'BAAI/bge-small-en-v1.5' }}
       - run: pip install -e .
-      - name: Build index
+      - name: Crawl (refresh the snapshot, no embed yet)
         env:
           PYTHONUNBUFFERED: "1" # stream progress lines to the log in real time
+        run: |
+          ARGS="--skip-embed"
+          if [ -n "${{ inputs.libraries }}" ]; then ARGS="$ARGS --libraries ${{ inputs.libraries }}"; fi
+          python scripts/build_index.py $ARGS
+      - name: Gloss new pages (incremental — already-glossed URLs are skipped)
+        continue-on-error: true # a gloss/quota failure must not block the embed
+        env:
+          PYTHONUNBUFFERED: "1"
+          # schedule events carry no inputs → fall back to the defaults
+          TORCHDOCS_PROVIDER: ${{ inputs.provider || 'openai-compat' }}
+          GEMINI_API_KEY: ${{ secrets.GOOGLE_API }}
+          OPENAI_COMPAT_BASE_URL: https://openrouter.ai/api/v1
+          OPENAI_COMPAT_API_KEY: ${{ secrets.OPENROUTER }}
+          TORCHDOCS_OPENAI_COMPAT_MODEL: ${{ inputs.llm || 'tencent/hy3:free,meta-llama/llama-3.3-70b-instruct:free' }}
+        run: python scripts/generate_glosses.py --limit 0 --batch 30 --sleep 5
+      - name: Commit any new glosses (also on gloss failure — partial progress is saved)
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f index/glosses.jsonl
+          git diff --cached --quiet || git commit -m "index: glosses from Actions run [skip ci]"
+          git pull --rebase origin main  # main may have moved during the run
+          git push
+      - name: Embed into Neon (now with the glosses in indexed_text)
+        env:
+          PYTHONUNBUFFERED: "1"
           NEON_URL: ${{ secrets.NEON }}
           # schedule events carry no inputs → fall back to the default model
           TORCHDOCS_EMBED_MODEL: ${{ inputs.model || 'BAAI/bge-small-en-v1.5' }}
-        run: |
-          ARGS=""
-          if [ -n "${{ inputs.libraries }}" ]; then ARGS="--libraries ${{ inputs.libraries }}"; fi
-          python scripts/build_index.py $ARGS
+        run: python scripts/build_index.py --skip-crawl
 
   # refresh the eval ground truth right after every (re)build, so the committed
   # inventory/manifest/coverage always describe the index that is actually live
