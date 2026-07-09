@@ -114,6 +114,51 @@ def existing_urls_of(path: Path) -> set[str]:
     return {json.loads(line)["url"] for line in path.open() if line.strip()}
 
 
+# committer identity is injected per-command (-c) so no global git config /
+# extra workflow step is needed; [skip ci] keeps the checkpoint push from
+# kicking off a CI run each time.
+_GIT_ID = [
+    "-c",
+    "user.name=github-actions[bot]",
+    "-c",
+    "user.email=github-actions[bot]@users.noreply.github.com",
+]
+
+
+def git_checkpoint(path: Path, label: str) -> None:
+    """Commit+push the enrichment file MID-RUN so a later stop can't discard it.
+
+    The batches are already flushed to `path` on disk, but on a GitHub runner
+    that file only reaches the repo via the workflow's final commit step — so a
+    cancel or the job timeout part-way through a multi-hour pass throws away
+    everything generated in this run. This pushes progress every few batches
+    instead. Opt-in (callers pass --commit-every; local runs skip it).
+
+    Every git failure — unset identity, a push race with another enrichment
+    run, a rebase conflict — is logged and swallowed: a missed checkpoint just
+    means the final commit step catches up. It must NEVER kill a long run.
+    """
+    import subprocess
+
+    def run(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", *args], capture_output=True, text=True)
+
+    try:
+        run("add", str(path))
+        if run("diff", "--cached", "--quiet").returncode == 0:
+            return  # nothing new staged (all dupes) — no checkpoint needed
+        run(*_GIT_ID, "commit", "-m", f"index: {label} checkpoint from Actions run [skip ci]")
+        if run(*_GIT_ID, "pull", "--rebase", "origin", "main").returncode != 0:
+            run("rebase", "--abort")  # leave the tree clean; retry next checkpoint
+            print(f"[checkpoint] {label}: rebase conflict, deferring to final commit", flush=True)
+            return
+        push = run("push")
+        note = "pushed" if push.returncode == 0 else f"push skipped: {push.stderr.strip()[:160]}"
+        print(f"[checkpoint] {label} progress {note}", flush=True)
+    except Exception as exc:  # never let a checkpoint kill the run
+        print(f"[checkpoint] {label} error (ignored): {exc}", flush=True)
+
+
 def existing_urls() -> set[str]:
     return existing_urls_of(GLOSSES_PATH)
 
@@ -124,6 +169,12 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=0, help="gloss at most N pages (0 = all)")
     parser.add_argument("--batch", type=int, default=12, help="pages per LLM call")
     parser.add_argument("--sleep", type=float, default=2.0, help="pause between calls (s)")
+    parser.add_argument(
+        "--push",
+        action="store_true",
+        help="commit+push the jsonl after every batch (CI runs; keeps progress "
+        "if the job is cancelled/timed out). Off by default so local runs don't commit.",
+    )
     args = parser.parse_args()
 
     from agent.llm import GenerationError, _raw_completion
@@ -166,6 +217,8 @@ def main() -> int:
             written += len(glosses)
             print(f"[gloss] {at + len(batch)}/{len(todo)} pages seen, "
                   f"{written} glosses written", flush=True)
+            if args.push:
+                git_checkpoint(GLOSSES_PATH, "glosses")
             time.sleep(args.sleep)
 
     print(f"[gloss] done: {written} new glosses → {GLOSSES_PATH}", flush=True)
