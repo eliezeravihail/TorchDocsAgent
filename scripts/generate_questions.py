@@ -93,7 +93,7 @@ def main() -> int:
     load_dotenv()
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=0, help="cover at most N pages (0 = all)")
-    parser.add_argument("--batch", type=int, default=10, help="pages per LLM call")
+    parser.add_argument("--batch", type=int, default=25, help="pages per LLM call")
     parser.add_argument("--sleep", type=float, default=2.0, help="pause between calls (s)")
     args = parser.parse_args()
 

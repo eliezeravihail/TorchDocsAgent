@@ -4,10 +4,14 @@ Runs ONCE on the incoming user question (in app.main.respond / scripts.ask),
 never on the internal planner / tool / repair calls that form an answer —
 those operate on an already-vetted question and on trusted docs content.
 
-Two cheap checks, short-circuited cheapest-first:
+Three cheap checks, short-circuited cheapest-first:
   1. length      — reject oversized pastes before anything else
-  2. topicality  — translate the question to English (the corpus and embedder
-                   are English-only), embed it, and require its nearest doc
+  2. language    — the corpus and embedder are English-only. Rather than pay a
+                   slow translation LLM call on every foreign question (which
+                   dominated latency for non-English input), ask the user to
+                   rephrase in English. A multilingual embedder would remove
+                   this limit — see docs/retrieval-gaps-and-improvements.md.
+  3. topicality  — embed the (English) question and require its nearest doc
                    chunk to be within a calibrated cosine distance.
 
 Membership in the docs' embedding space IS the policy: this app answers
@@ -20,16 +24,10 @@ contract downstream: answers come only from retrieved doc sections, citations
 are validated against the provided context, code is statically checked, and
 the agent's tools have no side effects.
 
-The translator is the one LLM this check trusts, so it is prompt-hardened
-(agent/translate.py): delimited input framed as data, embedded instructions
-translated literally, and sanity bounds on the output. Its result is cached,
-so the seed search reuses the SAME translation — the guard adds no extra LLM
-call.
+Fail-open by design: if the retrieval distance errors, we log and ALLOW — the
+guard can never take the app down. Toggle off with TORCHDOCS_GUARD=0.
 
-Fail-open by design: if translation or retrieval errors, we log and ALLOW —
-the guard can never take the app down. Toggle off with TORCHDOCS_GUARD=0.
-
-Deps (translate / distance functions) are injectable so tests run without an
+Deps (language / distance functions) are injectable so tests run without an
 LLM or a live database.
 """
 
@@ -58,11 +56,15 @@ REFUSAL_TOO_LONG = (
     "That question is too long for me to handle. Please shorten it to a focused "
     "PyTorch question."
 )
+REFUSAL_NON_ENGLISH = (
+    "I can only answer questions written in English right now — please rephrase "
+    "your question in English."
+)
 
 
 class Verdict(NamedTuple):
     ok: bool
-    reason: str = ""  # "" | "too_long" | "off_topic"
+    reason: str = ""  # "" | "too_long" | "non_english" | "off_topic"
     message: str = ""  # user-facing refusal when not ok
 
 
@@ -88,27 +90,14 @@ def _env_float(name: str, default: float) -> float:
 def _is_on_topic(
     question: str,
     distance_fn: Callable[[str], float | None] | None,
-    translate_fn: Callable[[str], str] | None,
 ) -> bool:
-    from agent.translate import looks_english
-
-    if translate_fn is None:
-        from agent.translate import translate_to_english as translate_fn
     if distance_fn is None:
         from index.retrieve import top_distance
 
         distance_fn = top_distance
     try:
-        english = translate_fn(question)
-        if not looks_english(english):
-            # translation degraded to the original (LLM outage / rate limit) —
-            # the English-only embedder can't measure this text, and calibration
-            # showed untranslated questions land in blocking range (~0.4+).
-            # Fail open rather than punish the user for an outage.
-            print("[guard] topicality skipped (translation unavailable); allowing", flush=True)
-            return True
-        distance = distance_fn(english)
-    except Exception as exc:  # noqa: BLE001 — fail-open on any translation/retrieval error
+        distance = distance_fn(question)
+    except Exception as exc:  # noqa: BLE001 — fail-open on any retrieval error
         print(f"[guard] topicality check skipped ({exc}); allowing", flush=True)
         return True
     if distance is None:  # empty index — a deploy problem, not the user's fault
@@ -124,7 +113,7 @@ def guard(
     question: str,
     *,
     distance_fn: Callable[[str], float | None] | None = None,
-    translate_fn: Callable[[str], str] | None = None,
+    looks_english_fn: Callable[[str], bool] | None = None,
 ) -> Verdict:
     """Vet one user question. Returns Verdict(ok=True) to proceed, else a refusal."""
     if not _enabled():
@@ -135,7 +124,14 @@ def guard(
         print(f"[guard] blocked over-long question ({len(question)} chars)", flush=True)
         return Verdict(False, "too_long", REFUSAL_TOO_LONG)
 
-    if not _is_on_topic(question, distance_fn, translate_fn):
+    if looks_english_fn is None:
+        from agent.translate import looks_english as looks_english_fn
+    if not looks_english_fn(question):
+        # English-only embedder: ask for English instead of a slow translation
+        print("[guard] non-English question; asking the user to rephrase", flush=True)
+        return Verdict(False, "non_english", REFUSAL_NON_ENGLISH)
+
+    if not _is_on_topic(question, distance_fn):
         return Verdict(False, "off_topic", REFUSAL_OFFTOPIC)
 
     return _OK

@@ -75,8 +75,10 @@ jobs:
         # a question failure must not throw away the glosses written above —
         # the commit step below runs regardless and both passes are resumable
         continue-on-error: true
-        # 5 questions/page is a longer reply than a gloss → smaller batches
-        run: python scripts/generate_questions.py --limit "${{ inputs.limit }}" --batch 10 --sleep 5
+        # 5 questions/page → batch 25 = ~125 short questions/reply, ~145 calls
+        # for the whole corpus (vs ~363 at batch 10). hy3 handles the longer
+        # reply fine; fewer calls means far less time in the free-tier queue.
+        run: python scripts/generate_questions.py --limit "${{ inputs.limit }}" --batch 25 --sleep 3
       - name: Commit whatever was written (also on failure — the run is resumable)
         if: always()
         run: |
