@@ -1,21 +1,26 @@
 name: Generate glosses
 
-# Contextual Retrieval, index side: LLM-write a one-sentence plain-language
-# gloss for every api reference page in the corpus snapshot (batched, ~300
-# calls for 3.6K pages). Resumable: already-glossed URLs are skipped and
-# partial progress is committed even on failure — re-run to fill gaps.
-# After glosses land, run Build Index (the changed recipe stamp forces the
-# one-time full re-embed), then Eval retrieval to measure the effect.
+# Index-side content enrichment, two passes over the corpus snapshot:
+#   1. glosses — a one-sentence plain-language description per api page
+#      (Contextual Retrieval)
+#   2. hypothetical questions — a few task-vocabulary questions each api page
+#      answers (QuOTE-style), for pages whose gloss alone couldn't bridge the
+#      vocabulary gap (measured 2026-07-09: Linear at dense rank ~3,400
+#      post-gloss)
+# Both are batched and resumable: already-covered URLs are skipped and partial
+# progress is committed even on failure — re-run to fill gaps. After they
+# land, run Build Index (the changed recipe stamp forces the one-time full
+# re-embed), then Eval retrieval to measure the effect.
 on:
   workflow_dispatch:
     inputs:
       provider:
-        description: "LLM provider. Free quotas are tight (measured 2026-07-08):
-          gemini = 20 req/day PER MODEL, OpenRouter = 50 req/day total without
-          credits. A failed provider falls through to the other (both keys set)."
+        description: "LLM provider. openai-compat = OpenRouter (hy3 with credit
+          carries the full corpus); gemini free = 20 req/day per model. A failed
+          provider falls through to the other (both keys set)."
         type: choice
-        options: [gemini, openai-compat]
-        default: gemini
+        options: [openai-compat, gemini]
+        default: openai-compat
       gemini_model:
         description: "gemini model — the free 20/day quota is per model, so
           re-running with a different one (gemini-2.5-flash-lite,
@@ -28,19 +33,27 @@ on:
         type: string
         default: "tencent/hy3:free,meta-llama/llama-3.3-70b-instruct:free"
       limit:
-        description: "gloss at most N pages this run (0 = all remaining)"
+        description: "cover at most N pages per pass this run (0 = all remaining)"
         type: string
         default: "0"
 
 permissions:
   contents: write
 
-concurrency: generate-glosses # two writers would duplicate gloss lines
+concurrency: generate-glosses # two writers would duplicate enrichment lines
 
 jobs:
   glosses:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 300
+    env:
+      PYTHONUNBUFFERED: "1"
+      TORCHDOCS_PROVIDER: ${{ inputs.provider }}
+      GEMINI_API_KEY: ${{ secrets.GOOGLE_API }}
+      TORCHDOCS_GEMINI_MODEL: ${{ inputs.gemini_model }}
+      OPENAI_COMPAT_BASE_URL: https://openrouter.ai/api/v1
+      OPENAI_COMPAT_API_KEY: ${{ secrets.OPENROUTER }}
+      TORCHDOCS_OPENAI_COMPAT_MODEL: ${{ inputs.model }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -55,23 +68,21 @@ jobs:
           restore-keys: corpus-
       - run: pip install -e .
       - name: Write glosses
-        env:
-          PYTHONUNBUFFERED: "1"
-          TORCHDOCS_PROVIDER: ${{ inputs.provider }}
-          GEMINI_API_KEY: ${{ secrets.GOOGLE_API }}
-          TORCHDOCS_GEMINI_MODEL: ${{ inputs.gemini_model }}
-          OPENAI_COMPAT_BASE_URL: https://openrouter.ai/api/v1
-          OPENAI_COMPAT_API_KEY: ${{ secrets.OPENROUTER }}
-          TORCHDOCS_OPENAI_COMPAT_MODEL: ${{ inputs.model }}
         # batch 30 → ~121 calls for the whole corpus; the run is resumable, so
         # each dispatch chips away at whatever today's quotas allow
         run: python scripts/generate_glosses.py --limit "${{ inputs.limit }}" --batch 30 --sleep 5
+      - name: Write hypothetical questions (QuOTE-style)
+        # a question failure must not throw away the glosses written above —
+        # the commit step below runs regardless and both passes are resumable
+        continue-on-error: true
+        # 5 questions/page is a longer reply than a gloss → smaller batches
+        run: python scripts/generate_questions.py --limit "${{ inputs.limit }}" --batch 10 --sleep 5
       - name: Commit whatever was written (also on failure — the run is resumable)
         if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add index/glosses.jsonl
-          git diff --cached --quiet || git commit -m "index: glosses from Actions run [skip ci]"
+          git add index/glosses.jsonl index/questions.jsonl
+          git diff --cached --quiet || git commit -m "index: content enrichment from Actions run [skip ci]"
           git pull --rebase origin main  # main may have moved during the run
           git push
