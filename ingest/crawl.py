@@ -102,7 +102,7 @@ def crawl(
     import os
     import time
 
-    from ingest.discover import fetch
+    from ingest.discover import fetch_html
 
     delay = float(os.environ.get("TORCHDOCS_CRAWL_DELAY", "0.2"))
     changed: dict[str, int] = {}
@@ -110,7 +110,9 @@ def crawl(
         count = 0
         for url in sorted(urls):
             try:
-                html = fetch(url).decode("utf-8", errors="replace")
+                # follow client-side redirects: docs/stable/... serves a
+                # "Redirecting…" stub whose real content is behind a meta-refresh
+                html = fetch_html(url)
             except Exception as exc:  # noqa: BLE001 — one bad page must not kill the crawl
                 print(f"[crawl] {url}: fetch failed ({exc})")
                 continue

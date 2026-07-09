@@ -29,10 +29,12 @@ def _live_page(url: str) -> tuple[dict, str] | None:
     if not _LIVE:
         return None
     from ingest.crawl import extract_main_html, to_markdown
-    from ingest.discover import fetch
+    from ingest.discover import fetch_html
 
     try:
-        html = fetch(url).decode("utf-8", errors="replace")
+        # follow client-side redirects (docs/stable/... → versioned page); a
+        # plain fetch would return the "Redirecting…" stub and hollow the answer
+        html = fetch_html(url)
     except Exception as exc:  # noqa: BLE001 — a dead link just means "no content"
         print(f"[hydrate] live fetch failed for {url}: {exc}", flush=True)
         return None

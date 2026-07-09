@@ -132,6 +132,57 @@ def fetch(url: str, timeout: float = 30.0, retries: int = FETCH_RETRIES) -> byte
     raise last_exc  # type: ignore[misc]  # loop ran ≥1 time, so last_exc is set
 
 
+def redirect_target(html: str, base_url: str) -> str | None:
+    """The URL a client-side redirect stub points at, else None.
+
+    docs.pytorch.org/docs/stable/<...> serves a "Redirecting…" page whose only
+    real content is `<meta http-equiv="refresh" content="0; url=<versioned>">`.
+    requests follows HTTP 3xx but NOT this, so a plain fetch captured an empty
+    stub for the entire core API reference (measured: 3,435/4,517 crawled pages
+    had title "Redirecting…", every one a docs/stable API page). A real content
+    page never carries a refresh meta, so finding one unambiguously means "this
+    is a redirect — follow it". Falls back to <link rel="canonical"> when it
+    points elsewhere.
+    """
+    from urllib.parse import urljoin
+
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "html.parser")
+    meta = soup.find("meta", attrs={"http-equiv": re.compile(r"^refresh$", re.I)})
+    if meta and meta.get("content"):
+        m = re.search(r"url\s*=\s*(.+)$", meta["content"], re.I)
+        if m:
+            return urljoin(base_url, m.group(1).strip().strip("'\""))
+    canonical = soup.find("link", rel="canonical")
+    if canonical and canonical.get("href"):
+        target = urljoin(base_url, canonical["href"].strip())
+        if target.rstrip("/") != base_url.rstrip("/"):
+            return target
+    return None
+
+
+def fetch_html(url: str, *, max_hops: int = 3, **kwargs) -> str:
+    """fetch() + follow client-side (meta-refresh) redirects to the real page.
+
+    Returns the final page's HTML as text. Loop-protected and hop-bounded so a
+    misconfigured redirect chain can't spin forever. The caller keeps its
+    ORIGINAL url as the pointer/citation key — only the *content* comes from the
+    redirect target — so stable URLs stay stable in the index and in answers.
+    """
+    seen: set[str] = set()
+    html = ""
+    for _ in range(max_hops + 1):
+        html = fetch(url, **kwargs).decode("utf-8", errors="replace")
+        seen.add(url)
+        target = redirect_target(html, url)
+        if not target or target in seen:
+            return html
+        print(f"[fetch] following redirect {url} → {target}", flush=True)
+        url = target
+    return html  # hop budget exhausted → return the last page fetched
+
+
 def _sitemap_pages(base: str, xml_text: str) -> set[str]:
     """Page URLs from a sitemap, following one level of <sitemapindex>."""
     import requests

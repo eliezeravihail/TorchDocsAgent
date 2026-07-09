@@ -78,7 +78,7 @@ jobs:
         # 5 questions/page → batch 25 = ~125 short questions/reply, ~145 calls
         # for the whole corpus (vs ~363 at batch 10). hy3 handles the longer
         # reply fine; fewer calls means far less time in the free-tier queue.
-        run: python scripts/generate_questions.py --limit "${{ inputs.limit }}" --batch 25 --sleep 3
+        run: python scripts/generate_questions.py --limit "${{ inputs.limit }}" --batch 25 --sleep 0
       - name: Commit whatever was written (also on failure — the run is resumable)
         if: always()
         run: |
