@@ -8,6 +8,8 @@ interleaved strongest-first into the top-k, and the answering model judges
 what is actually relevant.
 This replaced a global-RRF design whose crowding fixes (a reference channel,
 reserved seats, distance gates) traded one benchmark regression for another.
+A cross-encoder rerank (index/rerank.py) then reorders a wide slate of the
+fused candidates into the final top-k — precision after candidate generation.
 
 Returns POINTERS (url, anchor, heading path, ...) — never content. The
 caller hydrates content from the snapshot (index/hydrate.py). This is the
@@ -152,6 +154,7 @@ def retrieve(
     pool: int = 20,
     debug: bool = False,
     kind: str | None = None,
+    rerank_fn=None,
 ) -> list[dict[str, Any]]:
     """Top-k pointers for a query, drawn from per-kind pools.
 
@@ -161,13 +164,16 @@ def retrieve(
     (e.g. `scaled_dot_product_attention`) that dense similarity misses.
 
     Candidates farther than RELEVANCE_GAP from the best hit are dropped, then
-    the pools are interleaved (strongest pool first) into the top-k, so every
-    relevant content space is represented and none can crowd out another. An
-    exact-symbol match is pinned first, docs-search style.
+    the pools are interleaved (strongest pool first) into a wide slate. A
+    cross-encoder rerank (index/rerank.py — the precision stage; kill switch
+    TORCHDOCS_RERANK) reorders the slate into the top-k; when it is off the
+    slate's first k are the top-k unchanged. An exact-symbol match is pinned
+    first, docs-search style.
 
     `kind` restricts the search to one content space — the agent's planner
     sets it when it decides the question needs the reference catalog rather
-    than tutorial prose.
+    than tutorial prose. `rerank_fn` (tests) replaces the real reranker and
+    forces the rerank path on.
     """
     from contextlib import nullcontext
 
@@ -227,10 +233,21 @@ def retrieve(
             for ck in ranked[:3]:
                 print(f"[debug]   {pointers[ck]['heading_path']} | {pointers[ck]['url']}")
 
-    ranked = _interleave_pools(pools, dists, k)
+    from index import rerank as rerank_mod
+
+    # rerank reads a slate wider than k; round-robin order is prefix-stable, so
+    # with reranking off (or failing open) the first k match today's behavior
+    use_rerank = rerank_fn is not None or rerank_mod.enabled()
+    slate = max(k, rerank_mod.RERANK_SLATE) if use_rerank else k
+    ranked = _interleave_pools(pools, dists, slate)
+
+    if use_rerank and len(ranked) > 1:
+        rerank_fn = rerank_fn or rerank_mod.rerank
+        ranked = [p["chunk_key"] for p in rerank_fn(query, [pointers[ck] for ck in ranked], k=k)]
 
     # exact API lookup: if the user typed a precise symbol and its reference
     # page was found, pin it first — the docs-search behavior users expect
+    # (an explicit identifier outranks even the cross-encoder's judgment)
     if symbol:
         exact = next(
             (ck for kd, pl in pools for ck in pl if is_exact_api(pointers[ck], symbol)),
