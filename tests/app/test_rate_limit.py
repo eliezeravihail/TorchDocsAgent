@@ -11,7 +11,7 @@ from app import main
 @pytest.fixture(autouse=True)
 def _clean_slate(monkeypatch):
     monkeypatch.setenv("TORCHDOCS_GUARD", "0")
-    monkeypatch.setattr(main, "answer_agentic", lambda q, **k: Answer(answer_md="ok"))
+    monkeypatch.setattr(main, "answer_routed", lambda q, **k: Answer(answer_md="ok"))
     main._RATE_BUCKETS.clear()
     yield
     main._RATE_BUCKETS.clear()

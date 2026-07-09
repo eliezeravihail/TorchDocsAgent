@@ -63,7 +63,7 @@ def test_respond_runs_in_parallel_without_state_bleed(monkeypatch):
         time.sleep(0.2)
         return Answer(answer_md=f"echo:{question}", torch_version="unknown")
 
-    monkeypatch.setattr(main, "answer_agentic", fake_agent)
+    monkeypatch.setattr(main, "answer_routed", fake_agent)
 
     questions = [f"question number {i}" for i in range(8)]
     start = time.perf_counter()
