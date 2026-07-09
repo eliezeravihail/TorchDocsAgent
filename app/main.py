@@ -25,7 +25,7 @@ from collections import defaultdict, deque
 import gradio as gr
 from dotenv import load_dotenv
 
-from agent.loop import answer_agentic
+from agent.route import answer_routed
 from agent.schemas import Answer
 
 load_dotenv()
@@ -141,7 +141,9 @@ def respond(question: str, request: gr.Request = None) -> str:
     if not verdict.ok:
         return verdict.message
     try:
-        return render(answer_agentic(question))
+        # routed: simple questions take the 1-2-call grounded path (seconds),
+        # multi-source shapes get the full tool loop (see agent/route.py)
+        return render(answer_routed(question))
     except Exception as exc:  # noqa: BLE001 — never crash the UI
         # the real error goes to the logs; the user gets a generic line, since
         # an exception string can leak hosts, model slugs, and config internals

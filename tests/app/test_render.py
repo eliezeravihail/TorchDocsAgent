@@ -48,7 +48,7 @@ def test_respond_never_crashes_and_never_leaks_the_error(monkeypatch):
     def boom(q, **k):
         raise RuntimeError("db-host.internal:5432 down")
 
-    monkeypatch.setattr("app.main.answer_agentic", boom)
+    monkeypatch.setattr("app.main.answer_routed", boom)
     out = respond("how do I use SGD?")
     # the user gets a generic line; the exception text (hosts, slugs, config)
     # goes to the logs only
