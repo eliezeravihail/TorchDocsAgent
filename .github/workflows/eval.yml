@@ -1,23 +1,28 @@
 name: Eval
 
 # The measurement loop, one button:
-#   suite=retrieval (default) — recall@k + MRR over the 100-question set
-#     against the LIVE index, plus the rank diagnostic (where do the known-miss
-#     pages actually sit in their kind-pool). No LLM needed.
+#   suite=retrieval+judge (default) — recall@k + MRR over the 100-question set
+#     against the LIVE index (plus the rank diagnostic), AND the LLM-as-judge
+#     answer-quality anchor. The default is the full one-click measurement
+#     because the GitHub mobile app cannot set workflow inputs.
+#   suite=retrieval — recall/MRR only. No LLM needed.
 #   suite=agentic — the agent-loop benchmark (loop vs single-shot coverage
 #     delta). Needs LLM keys; slow on free tiers.
 #   suite=judge — LLM-as-judge answer quality (faithfulness / relevance /
 #     citation-correctness) over the grounded path. Needs LLM keys.
-#   suite=all — all three.
+#   suite=all — everything.
 # Results are committed back to main for before/after diffing.
 on:
   workflow_dispatch:
     inputs:
       suite:
-        description: "what to measure"
+        description: "what to measure. The default runs retrieval AND judge —
+          deliberately, because the GitHub mobile app can't set inputs, so the
+          default must be the measurement we actually want one click to give:
+          recall/MRR plus the answer-quality anchor. agentic stays opt-in."
         type: choice
-        options: [retrieval, agentic, judge, all]
-        default: retrieval
+        options: [retrieval+judge, retrieval, agentic, judge, all]
+        default: retrieval+judge
       set:
         description: "retrieval eval set (v1 = 100 questions, v0 = original 13)"
         type: string
@@ -63,7 +68,7 @@ permissions:
 
 jobs:
   retrieval:
-    if: ${{ inputs.suite == 'retrieval' || inputs.suite == 'all' }}
+    if: ${{ inputs.suite == 'retrieval' || inputs.suite == 'retrieval+judge' || inputs.suite == 'all' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -140,7 +145,7 @@ jobs:
           git push
 
   judge:
-    if: ${{ inputs.suite == 'judge' || inputs.suite == 'all' }}
+    if: ${{ inputs.suite == 'judge' || inputs.suite == 'retrieval+judge' || inputs.suite == 'all' }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
