@@ -99,6 +99,40 @@ def test_gloss_stamp_changes_the_recipe_with_gloss_content(monkeypatch, tmp_path
     assert first not in ("none", embed._gloss_stamp())
 
 
+def test_indexed_text_folds_in_the_pages_hypothetical_questions(monkeypatch):
+    # QuOTE-style: the question phrasing itself joins both channels, so a
+    # descriptive query matches question→question instead of question→signature
+    from index.embed import indexed_text
+
+    url = "https://docs.pytorch.org/docs/stable/generated/torch.nn.Linear.html"
+    questions = [
+        "What's the standard fully-connected layer that applies a weight matrix and bias?",
+        "How do I add a dense layer to my network?",
+    ]
+    monkeypatch.setattr("index.embed.load_glosses", lambda: {})
+    monkeypatch.setattr("index.embed.load_questions", lambda: {url: questions})
+    unit = {"url": url, "heading_path": ["Linear"], "content": "in_features (int)"}
+    text = indexed_text(unit)
+    for q in questions:
+        assert q in text
+    # questions sit between the symbol block and the body, like the gloss
+    assert text.index("torch.nn.Linear") < text.index(questions[0]) < text.index("in_features")
+    # a page with no questions is unchanged
+    assert questions[0] not in indexed_text({**unit, "url": url.replace("Linear", "GELU")})
+
+
+def test_questions_stamp_changes_the_recipe_with_question_content(monkeypatch, tmp_path):
+    # same contract as the gloss stamp: new/changed questions force the re-embed
+    from index import embed
+
+    monkeypatch.setattr(embed, "QUESTIONS_PATH", tmp_path / "questions.jsonl")
+    assert embed._questions_stamp() == "none"
+    embed.QUESTIONS_PATH.write_text('{"url": "u", "questions": ["q"]}\n')
+    first = embed._questions_stamp()
+    embed.QUESTIONS_PATH.write_text('{"url": "u", "questions": ["other"]}\n')
+    assert first not in ("none", embed._questions_stamp())
+
+
 def test_iter_corpus_units_walks_snapshot(tmp_path):
     save_page("https://docs.pytorch.org/docs/stable/optim.html", "core", HTML, tmp_path)
     units = list(iter_corpus_units(tmp_path))

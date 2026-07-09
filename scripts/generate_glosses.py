@@ -106,10 +106,16 @@ def parse_glosses(raw: str, n: int) -> dict[int, str]:
     return out
 
 
-def existing_urls() -> set[str]:
-    if not GLOSSES_PATH.exists():
+def existing_urls_of(path: Path) -> set[str]:
+    """URLs already covered in a jsonl enrichment file — the resume check,
+    shared with generate_questions.py (same append-and-skip pipeline shape)."""
+    if not path.exists():
         return set()
-    return {json.loads(line)["url"] for line in GLOSSES_PATH.open() if line.strip()}
+    return {json.loads(line)["url"] for line in path.open() if line.strip()}
+
+
+def existing_urls() -> set[str]:
+    return existing_urls_of(GLOSSES_PATH)
 
 
 def main() -> int:
