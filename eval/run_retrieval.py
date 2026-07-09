@@ -31,7 +31,12 @@ from dotenv import load_dotenv
 
 EVAL_DIR = Path(__file__).parent
 EVAL_SET = os.environ.get("TORCHDOCS_EVAL_SET", "v1")
-RESULTS = EVAL_DIR / "results" / f"retrieval_{EVAL_SET}.jsonl"
+# ablation runs (k≠8, rerank off) must not overwrite — masquerade as — the
+# standard results file; suffix the variant, mirroring run_agentic's _firstN
+_K = os.environ.get("TORCHDOCS_RETRIEVAL_K", "8")
+_RERANK_OFF = os.environ.get("TORCHDOCS_RERANK", "1") in ("0", "false", "no")
+_VARIANT = ("" if _K == "8" else f"_k{_K}") + ("_norerank" if _RERANK_OFF else "")
+RESULTS = EVAL_DIR / "results" / f"retrieval_{EVAL_SET}{_VARIANT}.jsonl"
 
 
 def load_questions() -> dict[str, dict]:

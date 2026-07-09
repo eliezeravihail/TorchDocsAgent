@@ -27,6 +27,17 @@ on:
           live index was built with, or the query vector width won't fit."
         type: string
         default: "BAAI/bge-small-en-v1.5"
+      rerank:
+        description: "cross-encoder rerank stage (the production default is ON;
+          pick 0 for a before/after ablation against the raw fused order)"
+        type: choice
+        options: ["1", "0"]
+        default: "1"
+      k:
+        description: "top-k sections retrieved per question (the app's default
+          is 8; try 4 to measure precision-over-volume after reranking)"
+        type: string
+        default: "8"
       provider:
         description: "agentic/judge: LLM provider (gemini free = 20 req/day per
           model; OpenRouter free = 50/day without credits, far higher with
@@ -73,6 +84,8 @@ jobs:
           NEON_URL: ${{ secrets.NEON }}
           TORCHDOCS_EVAL_SET: ${{ inputs.set }}
           TORCHDOCS_EMBED_MODEL: ${{ inputs.model }}
+          TORCHDOCS_RERANK: ${{ inputs.rerank }}
+          TORCHDOCS_RETRIEVAL_K: ${{ inputs.k }}
         run: python -m eval.run_retrieval
       - name: Rank diagnostic (why do the known misses miss)
         env:
@@ -154,6 +167,8 @@ jobs:
           TORCHDOCS_OPENAI_COMPAT_MODEL: ${{ inputs.llm }}
           TORCHDOCS_EVAL_SET: ${{ inputs.set }}
           TORCHDOCS_JUDGE_LIMIT: ${{ inputs.judge_limit }}
+          TORCHDOCS_RERANK: ${{ inputs.rerank }}
+          TORCHDOCS_RETRIEVAL_K: ${{ inputs.k }}
         run: python -m eval.run_judge
       - name: Commit results back to the branch
         run: |
