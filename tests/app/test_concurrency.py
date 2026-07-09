@@ -68,7 +68,7 @@ def test_respond_runs_in_parallel_without_state_bleed(monkeypatch):
     questions = [f"question number {i}" for i in range(8)]
     start = time.perf_counter()
     with cf.ThreadPoolExecutor(max_workers=8) as pool:
-        outputs = list(pool.map(main.respond, questions))
+        outputs = list(pool.map(main._pipeline, questions))
     elapsed = time.perf_counter() - start
 
     # isolation: every caller got back its OWN question, none crossed wires
