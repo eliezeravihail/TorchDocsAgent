@@ -80,6 +80,17 @@ def read_page(url: str) -> dict:
     """Whole page for a URL already surfaced by search_docs."""
     from index.hydrate import hydrate_page
 
+    url = (url or "").strip()
+    if not url.startswith(("http://", "https://")):
+        # the planner sometimes passes a section HEADING it saw in a search
+        # result (e.g. "Build the Neural Network > Define the Class") instead of
+        # the url. Don't fetch that (it 'No scheme supplied'-errors and wastes a
+        # call) — tell the model exactly what read_page needs so it self-corrects.
+        return {
+            "url": url,
+            "error": "read_page needs the full https:// URL from a search_docs "
+            "result's `url` field, not a section title.",
+        }
     page = hydrate_page(url)
     if page is None:
         return {"url": url, "error": "page not in the snapshot"}

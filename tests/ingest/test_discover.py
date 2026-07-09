@@ -171,3 +171,69 @@ def test_fetch_abandons_oversized_pages_early(monkeypatch):
     monkeypatch.setattr("requests.get", lambda url, **kw: huge)
     with pytest.raises(ValueError, match="exceeds"):
         disc.fetch("https://docs.pytorch.org/huge.html")
+
+
+# --- client-side redirect following (docs/stable "Redirecting…" stubs) --------
+
+
+def test_redirect_target_reads_meta_refresh():
+    from ingest.discover import redirect_target
+
+    stub = (
+        '<html><head><title>Redirecting…</title>'
+        '<meta http-equiv="refresh" content="0; url=../../2.13/generated/torch.optim.SGD.html">'
+        "</head><body>You should have been redirected.</body></html>"
+    )
+    base = "https://docs.pytorch.org/docs/stable/generated/torch.optim.SGD.html"
+    assert (
+        redirect_target(stub, base)
+        == "https://docs.pytorch.org/docs/2.13/generated/torch.optim.SGD.html"
+    )
+
+
+def test_redirect_target_falls_back_to_canonical():
+    stub = (
+        '<html><head><link rel="canonical" '
+        'href="https://docs.pytorch.org/docs/2.13/x.html"></head><body/></html>'
+    )
+    from ingest.discover import redirect_target
+
+    assert redirect_target(stub, "https://docs.pytorch.org/docs/stable/x.html") == (
+        "https://docs.pytorch.org/docs/2.13/x.html"
+    )
+
+
+def test_redirect_target_none_for_a_real_page():
+    from ingest.discover import redirect_target
+
+    real = "<html><head><title>torch.optim.SGD</title></head><body><h1>SGD</h1></body></html>"
+    # a canonical that points at the SAME page is not a redirect
+    same = (
+        '<html><head><link rel="canonical" href="https://d/p.html"></head><body>real</body></html>'
+    )
+    assert redirect_target(real, "https://d/p.html") is None
+    assert redirect_target(same, "https://d/p.html") is None
+
+
+def test_fetch_html_follows_the_stub_to_the_real_content(monkeypatch):
+    import ingest.discover as disc
+
+    real = "<html><body><h1>SGD</h1><p>momentum...</p></body></html>"
+    stub = (
+        '<meta http-equiv="refresh" content="0; url=https://d/real.html">'
+    )
+    pages = {"https://d/stable.html": stub, "https://d/real.html": real}
+    monkeypatch.setattr(disc, "fetch", lambda url, **kw: pages[url].encode())
+    assert disc.fetch_html("https://d/stable.html") == real
+
+
+def test_fetch_html_is_loop_protected(monkeypatch):
+    import ingest.discover as disc
+
+    # two stubs pointing at each other must not spin forever
+    a = '<meta http-equiv="refresh" content="0; url=https://d/b.html">'
+    b = '<meta http-equiv="refresh" content="0; url=https://d/a.html">'
+    pages = {"https://d/a.html": a, "https://d/b.html": b}
+    monkeypatch.setattr(disc, "fetch", lambda url, **kw: pages[url].encode())
+    # terminates (returns the last fetched html) instead of hanging
+    assert disc.fetch_html("https://d/a.html", max_hops=3) in (a, b)
