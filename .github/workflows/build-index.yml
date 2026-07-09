@@ -91,7 +91,7 @@ jobs:
           OPENAI_COMPAT_BASE_URL: https://openrouter.ai/api/v1
           OPENAI_COMPAT_API_KEY: ${{ secrets.OPENROUTER }}
           TORCHDOCS_OPENAI_COMPAT_MODEL: ${{ inputs.llm || 'tencent/hy3:free,meta-llama/llama-3.3-70b-instruct:free' }}
-        run: python scripts/generate_questions.py --limit 0 --batch 10 --sleep 5
+        run: python scripts/generate_questions.py --limit 0 --batch 25 --sleep 3
       - name: Commit any new enrichment (also on failure — partial progress is saved)
         if: always()
         run: |

@@ -371,3 +371,28 @@ def test_failed_provider_is_skipped_by_the_next_question(monkeypatch):
     tried.clear()
     answer_question("q")
     assert tried == ["gemini"]  # the broken provider is cooling down
+
+
+# --- key hygiene: strip whitespace, keep secrets out of logs ------------------
+
+
+def test_env_secret_strips_surrounding_whitespace(monkeypatch):
+    from agent.llm import _env_secret
+
+    # a key pasted into a secret field picks up a trailing newline — the exact
+    # footgun that made httpx reject the Authorization header and 500 the deploy
+    monkeypatch.setenv("SOME_KEY", "sk-or-v1-abc123\n\n\n")
+    assert _env_secret("SOME_KEY") == "sk-or-v1-abc123"
+    monkeypatch.setenv("SOME_KEY", "   ")
+    assert _env_secret("SOME_KEY") is None  # blank → treated as unset
+    monkeypatch.delenv("SOME_KEY", raising=False)
+    assert _env_secret("SOME_KEY") is None
+
+
+def test_redact_scrubs_bearer_tokens_and_keys():
+    from agent.llm import _redact
+
+    leaked = "error: Illegal header value b'Bearer sk-or-v1-deadbeefcafe\\n\\n\\n'"
+    out = _redact(leaked)
+    assert "sk-or-v1-deadbeefcafe" not in out
+    assert "Bearer ***" in out or "sk-***" in out

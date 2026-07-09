@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import random
+import re
 import threading
 import time
 
@@ -102,6 +103,36 @@ def reset_cooldowns() -> None:
         _COOLDOWNS.clear()
 
 
+def _redact(text: str) -> str:
+    """Scrub secrets from a string before it is logged.
+
+    Provider errors quote the offending request — an `Authorization: Bearer
+    <key>` header, an `sk-...` token — so printing an exception's text or its
+    `__cause__` can leak the very API key it failed to use into the deploy's
+    logs (measured: a newline in the key made httpx's LocalProtocolError echo
+    the whole Bearer header). Mask anything key-shaped so logs stay useful
+    without becoming a credential sink.
+    """
+    text = re.sub(r"(?i)bearer\s+\S+", "Bearer ***", text)
+    text = re.sub(r"sk-[A-Za-z0-9._-]{6,}", "sk-***", text)
+    return text
+
+
+def _env_secret(name: str) -> str | None:
+    """An API key / base URL from the environment, surrounding whitespace stripped.
+
+    A secret pasted into a deploy's secret field (HF Spaces, GitHub, ...)
+    routinely picks up a trailing newline. Passed straight into an
+    `Authorization: Bearer <key>` header that becomes an *illegal header value*,
+    and every call to the provider dies with an opaque "Connection error" —
+    the whole deploy looks down while the secret is "set correctly". Stripping
+    here makes a newline-suffixed key just work. Returns None for missing/blank.
+    """
+    value = os.environ.get(name)
+    value = value.strip() if value else ""
+    return value or None
+
+
 def _gemini_key() -> str | None:
     """Gemini key under any of the common secret names.
 
@@ -111,18 +142,18 @@ def _gemini_key() -> str | None:
     instead of silently disabling it.
     """
     return (
-        os.environ.get("GEMINI_API_KEY")
-        or os.environ.get("GEMINI")
-        or os.environ.get("GOOGLE_API_KEY")
+        _env_secret("GEMINI_API_KEY")
+        or _env_secret("GEMINI")
+        or _env_secret("GOOGLE_API_KEY")
     )
 
 
 def _configured_providers() -> list[str]:
     """Providers whose API key is present, in preference order."""
     avail = []
-    if os.environ.get("OPENAI_COMPAT_API_KEY"):
+    if _env_secret("OPENAI_COMPAT_API_KEY"):
         avail.append("openai-compat")
-    if os.environ.get("ANTHROPIC_API_KEY"):
+    if _env_secret("ANTHROPIC_API_KEY"):
         avail.append("anthropic")
     if _gemini_key():
         avail.append("gemini")
@@ -203,7 +234,10 @@ def answer_question(
             last_exc = exc
             _set_cooldown(f"provider:{p}", PROVIDER_COOLDOWN)
             nxt = f"; falling back to {chain[i + 1]}" if i + 1 < len(chain) else ""
-            print(f"[llm] provider {p} failed ({type(exc).__name__}: {exc}){nxt}", flush=True)
+            print(
+                _redact(f"[llm] provider {p} failed ({type(exc).__name__}: {exc}){nxt}"),
+                flush=True,
+            )
     raise GenerationError(f"all providers failed ({', '.join(chain)}): {last_exc}")
 
 
@@ -283,9 +317,10 @@ def _raw_dispatch(
         import anthropic
 
         if client is None:
-            if not os.environ.get("ANTHROPIC_API_KEY"):
+            key = _env_secret("ANTHROPIC_API_KEY")
+            if not key:
                 raise GenerationError("ANTHROPIC_API_KEY is not set")
-            client = anthropic.Anthropic()
+            client = anthropic.Anthropic(api_key=key)
         try:
             msg = client.messages.create(
                 model=ANTHROPIC_MODEL,
@@ -319,14 +354,14 @@ def _compat_client(client, timeout: float):
         return client
     import openai
 
-    base_url = os.environ.get("OPENAI_COMPAT_BASE_URL") or "https://openrouter.ai/api/v1"
+    base_url = _env_secret("OPENAI_COMPAT_BASE_URL") or "https://openrouter.ai/api/v1"
     if not base_url.startswith("http"):
         # a misconfigured secret (missing scheme) otherwise surfaces as an
         # opaque "Connection error" — fail loudly with the offending value
         raise GenerationError(
             f"OPENAI_COMPAT_BASE_URL must be a full http(s) URL, got {base_url!r}"
         )
-    key = os.environ.get("OPENAI_COMPAT_API_KEY")
+    key = _env_secret("OPENAI_COMPAT_API_KEY")
     if not key:
         raise GenerationError("OPENAI_COMPAT_API_KEY not set")
     cache_key = (base_url, key, timeout)
@@ -377,7 +412,10 @@ def _compat_complete(client, messages, *, retries: int = 3, json_mode: bool = Fa
                 # blocked egress); surface the wrapped cause so logs are useful
                 cause = getattr(exc, "__cause__", None)
                 detail = f" (cause: {cause!r})" if cause else ""
-                print(f"[llm] {model} error: {type(exc).__name__}: {exc}{detail}", flush=True)
+                print(
+                    _redact(f"[llm] {model} error: {type(exc).__name__}: {exc}{detail}"),
+                    flush=True,
+                )
                 status = getattr(exc, "status_code", None)
                 if status == 404:  # slug retired / now paid → skip to the next model
                     _set_cooldown(f"model:{model}", MODEL_COOLDOWN_404)
@@ -536,9 +574,10 @@ def _answer_anthropic(question: str, system: str, client, retries: int, timeout:
     import anthropic
 
     if client is None:
-        if not os.environ.get("ANTHROPIC_API_KEY"):
+        key = _env_secret("ANTHROPIC_API_KEY")
+        if not key:
             raise GenerationError("ANTHROPIC_API_KEY is not set")
-        client = anthropic.Anthropic()
+        client = anthropic.Anthropic(api_key=key)
 
     def call(messages):
         return client.messages.create(
