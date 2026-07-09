@@ -1,7 +1,7 @@
 import pytest
 
 from agent.schemas import Answer, Citation, Referral
-from app.main import render, respond
+from app.main import THINKING_NOTE, _pipeline, render, respond
 
 
 @pytest.fixture(autouse=True)
@@ -40,17 +40,28 @@ def test_render_no_license_note_without_citations():
     assert "BSD-3-Clause" not in render(answer)
 
 
-def test_respond_empty_question():
-    assert "Ask me something" in respond("   ")
+def test_pipeline_empty_question():
+    assert "Ask me something" in _pipeline("   ")
 
 
-def test_respond_never_crashes_and_never_leaks_the_error(monkeypatch):
+def test_pipeline_never_crashes_and_never_leaks_the_error(monkeypatch):
     def boom(q, **k):
         raise RuntimeError("db-host.internal:5432 down")
 
     monkeypatch.setattr("app.main.answer_routed", boom)
-    out = respond("how do I use SGD?")
+    out = _pipeline("how do I use SGD?")
     # the user gets a generic line; the exception text (hosts, slugs, config)
     # goes to the logs only
     assert "went wrong" in out
     assert "db-host.internal" not in out
+
+
+def test_respond_streams_the_thinking_note_then_the_answer(monkeypatch):
+    # the UI generator shows immediate feedback, then swaps in the final answer;
+    # the LAST value is what gradio_client (the smoke test) receives
+    monkeypatch.setattr(
+        "app.main.answer_routed", lambda q, **k: Answer(answer_md="the answer")
+    )
+    chunks = list(respond("how do I use SGD?"))
+    assert chunks[0] == THINKING_NOTE
+    assert "the answer" in chunks[-1] and chunks[-1] != THINKING_NOTE

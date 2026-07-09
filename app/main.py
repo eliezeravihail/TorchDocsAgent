@@ -65,6 +65,15 @@ RATE_LIMIT = int(os.environ.get("TORCHDOCS_RATE_LIMIT", "8"))
 RATE_WINDOW = float(os.environ.get("TORCHDOCS_RATE_WINDOW_SECONDS", "60"))
 BUSY_NOTE = "You're asking faster than I can answer — give it a moment and try again."
 
+# Shown the instant a question is submitted, then replaced by the answer. The
+# heavy path (guard embed → retrieval → LLM) takes a few seconds, so immediate
+# feedback is the difference between "is it broken?" and "it's working".
+THINKING_NOTE = "🔎 Searching the PyTorch docs and drafting an answer…"
+# Keep the phrase "went wrong" — the post-deploy smoke test treats it as the
+# failure marker (scripts/smoke_space.py). The real exception goes to the logs;
+# the user never sees hosts, model slugs, or config internals.
+ERROR_NOTE = "⚠️ Something went wrong answering that. Please try again in a moment."
+
 _RATE_LOCK = threading.Lock()
 _RATE_BUCKETS: dict[str, deque[float]] = defaultdict(deque)
 
@@ -127,7 +136,8 @@ def render(answer: Answer) -> str:
     return "\n".join(parts)
 
 
-def respond(question: str, request: gr.Request = None) -> str:
+def _pipeline(question: str, request: gr.Request = None) -> str:
+    """The full answer pipeline → final markdown string (no UI concerns)."""
     question = (question or "").strip()
     if not question:
         return "Ask me something about PyTorch."
@@ -148,7 +158,20 @@ def respond(question: str, request: gr.Request = None) -> str:
         # the real error goes to the logs; the user gets a generic line, since
         # an exception string can leak hosts, model slugs, and config internals
         print(f"[app] answer failed: {type(exc).__name__}: {exc}", flush=True)
-        return "Something went wrong answering that. Please try again in a moment."
+        return ERROR_NOTE
+
+
+def respond(question: str, request: gr.Request = None):
+    """UI entrypoint: show the thinking indicator immediately, then the answer.
+
+    A generator so Gradio streams the placeholder the instant a question is
+    submitted (and pulses the output while the pipeline runs), then swaps in the
+    finished markdown — the difference between "is it stuck?" and "it's working"
+    on the multi-second heavy path. gradio_client.predict returns the LAST
+    yielded value, so the post-deploy smoke test still receives the real answer.
+    """
+    yield THINKING_NOTE
+    yield _pipeline(question, request)
 
 
 def build_ui():
