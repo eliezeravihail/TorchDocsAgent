@@ -37,7 +37,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from dotenv import load_dotenv
 
-from scripts.generate_glosses import api_pages, existing_urls_of
+from scripts.generate_glosses import api_pages, existing_urls_of, git_checkpoint
 
 QUESTIONS_PATH = Path(__file__).parent.parent / "index" / "questions.jsonl"
 
@@ -95,6 +95,12 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=0, help="cover at most N pages (0 = all)")
     parser.add_argument("--batch", type=int, default=50, help="pages per LLM call")
     parser.add_argument("--sleep", type=float, default=0.0, help="pause between calls (s)")
+    parser.add_argument(
+        "--push",
+        action="store_true",
+        help="commit+push the jsonl after every batch (CI runs; keeps progress "
+        "if the job is cancelled/timed out). Off by default so local runs don't commit.",
+    )
     args = parser.parse_args()
 
     from agent.llm import GenerationError, _raw_completion
@@ -138,6 +144,8 @@ def main() -> int:
             written += len(sets)
             print(f"[questions] {at + len(batch)}/{len(todo)} pages seen, "
                   f"{written} question sets written", flush=True)
+            if args.push:
+                git_checkpoint(QUESTIONS_PATH, "questions")
             time.sleep(args.sleep)
 
     print(f"[questions] done: {written} new question sets → {QUESTIONS_PATH}", flush=True)

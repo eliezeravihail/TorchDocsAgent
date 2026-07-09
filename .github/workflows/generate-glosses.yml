@@ -73,7 +73,8 @@ jobs:
       - name: Write glosses
         # batch 30 → ~121 calls for the whole corpus; the run is resumable, so
         # each dispatch chips away at what's left. paid hy3 → no proactive sleep.
-        run: python scripts/generate_glosses.py --limit "${{ inputs.limit }}" --batch 30 --sleep 0
+        # --push commits+pushes after every batch (survives a cancel/timeout).
+        run: python scripts/generate_glosses.py --limit "${{ inputs.limit }}" --batch 30 --sleep 0 --push
       - name: Write hypothetical questions (QuOTE-style)
         # a question failure must not throw away the glosses written above —
         # the commit step below runs regardless and both passes are resumable
@@ -82,7 +83,8 @@ jobs:
         # is nowhere near that (~7k), so the cap is JSON-parse reliability, not
         # context; 50 halves the calls vs 25 and a bad batch is skipped + re-run.
         # paid hy3 → sleep 0 (no free-tier queue to pace around).
-        run: python scripts/generate_questions.py --limit "${{ inputs.limit }}" --batch 50 --sleep 0
+        # --push commits+pushes after every batch (survives a cancel/timeout).
+        run: python scripts/generate_questions.py --limit "${{ inputs.limit }}" --batch 50 --sleep 0 --push
       - name: Commit whatever was written (also on failure — the run is resumable)
         if: always()
         run: |
