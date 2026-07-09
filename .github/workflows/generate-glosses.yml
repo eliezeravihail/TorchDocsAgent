@@ -29,9 +29,12 @@ on:
         default: "gemini-2.5-flash"
       model:
         description: "OpenRouter slugs (fallback chain) — used when provider
-          is openai-compat or as the cross-provider fallback"
+          is openai-compat or as the cross-provider fallback. Primary is PAID
+          tencent/hy3 (spends account credit): the :free tier throttles hard
+          and made the questions pass crawl for hours; paid removes the cap.
+          The :free llama stays as an emergency fallback only."
         type: string
-        default: "tencent/hy3:free,meta-llama/llama-3.3-70b-instruct:free"
+        default: "tencent/hy3,meta-llama/llama-3.3-70b-instruct:free"
       limit:
         description: "cover at most N pages per pass this run (0 = all remaining)"
         type: string
@@ -69,16 +72,17 @@ jobs:
       - run: pip install -e .
       - name: Write glosses
         # batch 30 → ~121 calls for the whole corpus; the run is resumable, so
-        # each dispatch chips away at whatever today's quotas allow
-        run: python scripts/generate_glosses.py --limit "${{ inputs.limit }}" --batch 30 --sleep 5
+        # each dispatch chips away at what's left. paid hy3 → no proactive sleep.
+        run: python scripts/generate_glosses.py --limit "${{ inputs.limit }}" --batch 30 --sleep 0
       - name: Write hypothetical questions (QuOTE-style)
         # a question failure must not throw away the glosses written above —
         # the commit step below runs regardless and both passes are resumable
         continue-on-error: true
-        # 5 questions/page → batch 25 = ~125 short questions/reply, ~145 calls
-        # for the whole corpus (vs ~363 at batch 10). hy3 handles the longer
-        # reply fine; fewer calls means far less time in the free-tier queue.
-        run: python scripts/generate_questions.py --limit "${{ inputs.limit }}" --batch 25 --sleep 0
+        # batch 50 = ~250 short questions/reply. hy3's 262k-token OUTPUT window
+        # is nowhere near that (~7k), so the cap is JSON-parse reliability, not
+        # context; 50 halves the calls vs 25 and a bad batch is skipped + re-run.
+        # paid hy3 → sleep 0 (no free-tier queue to pace around).
+        run: python scripts/generate_questions.py --limit "${{ inputs.limit }}" --batch 50 --sleep 0
       - name: Commit whatever was written (also on failure — the run is resumable)
         if: always()
         run: |

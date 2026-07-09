@@ -31,9 +31,13 @@ on:
         options: [openai-compat, gemini]
         default: openai-compat
       llm:
-        description: "OpenRouter slugs for glossing (fallback chain)"
+        description: "OpenRouter slugs for glossing/questions (fallback chain).
+          Primary is PAID tencent/hy3 (spends the account credit) — the :free
+          tier throttles hard and made the questions pass crawl for hours; paid
+          removes the rate cap so ~2k pages finish in minutes. The :free llama
+          stays as an emergency fallback only if hy3 errors."
         type: string
-        default: "tencent/hy3:free,meta-llama/llama-3.3-70b-instruct:free"
+        default: "tencent/hy3,meta-llama/llama-3.3-70b-instruct:free"
   schedule:
     - cron: "0 3 * * 5" # weekly recrawl, Fridays 03:00 UTC
 
@@ -80,8 +84,10 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GOOGLE_API }}
           OPENAI_COMPAT_BASE_URL: https://openrouter.ai/api/v1
           OPENAI_COMPAT_API_KEY: ${{ secrets.OPENROUTER }}
-          TORCHDOCS_OPENAI_COMPAT_MODEL: ${{ inputs.llm || 'tencent/hy3:free,meta-llama/llama-3.3-70b-instruct:free' }}
-        run: python scripts/generate_glosses.py --limit 0 --batch 30 --sleep 5
+          TORCHDOCS_OPENAI_COMPAT_MODEL: ${{ inputs.llm || 'tencent/hy3,meta-llama/llama-3.3-70b-instruct:free' }}
+        # paid hy3 → no free-tier queue, so no proactive sleep (the 429-retry
+        # honours the server's own Retry-After if we ever do get limited)
+        run: python scripts/generate_glosses.py --limit 0 --batch 30 --sleep 0
       - name: Hypothetical questions for new pages (QuOTE-style, incremental)
         continue-on-error: true # same contract as the gloss step
         env:
@@ -90,8 +96,12 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GOOGLE_API }}
           OPENAI_COMPAT_BASE_URL: https://openrouter.ai/api/v1
           OPENAI_COMPAT_API_KEY: ${{ secrets.OPENROUTER }}
-          TORCHDOCS_OPENAI_COMPAT_MODEL: ${{ inputs.llm || 'tencent/hy3:free,meta-llama/llama-3.3-70b-instruct:free' }}
-        run: python scripts/generate_questions.py --limit 0 --batch 25 --sleep 0
+          TORCHDOCS_OPENAI_COMPAT_MODEL: ${{ inputs.llm || 'tencent/hy3,meta-llama/llama-3.3-70b-instruct:free' }}
+        # batch 50: hy3's 262k-token OUTPUT window is nowhere near the limit
+        # (~140 tokens/page × 50 = ~7k), so the real cap is JSON-parse
+        # reliability, not context. 50 halves the call count vs 25 and a bad
+        # batch is just skipped + re-run (resumable). paid → sleep 0.
+        run: python scripts/generate_questions.py --limit 0 --batch 50 --sleep 0
       - name: Commit any new enrichment (also on failure — partial progress is saved)
         if: always()
         run: |

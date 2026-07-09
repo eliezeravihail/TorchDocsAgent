@@ -93,8 +93,8 @@ def main() -> int:
     load_dotenv()
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=0, help="cover at most N pages (0 = all)")
-    parser.add_argument("--batch", type=int, default=25, help="pages per LLM call")
-    parser.add_argument("--sleep", type=float, default=2.0, help="pause between calls (s)")
+    parser.add_argument("--batch", type=int, default=50, help="pages per LLM call")
+    parser.add_argument("--sleep", type=float, default=0.0, help="pause between calls (s)")
     args = parser.parse_args()
 
     from agent.llm import GenerationError, _raw_completion
@@ -117,7 +117,7 @@ def main() -> int:
         for at in range(0, len(todo), args.batch):
             batch = todo[at : at + args.batch]
             try:
-                raw = _raw_completion(batch_prompt(batch), system=SYSTEM, timeout=120.0)
+                raw = _raw_completion(batch_prompt(batch), system=SYSTEM, timeout=180.0)
             except GenerationError as exc:
                 print(f"[questions] batch at {at} failed: {exc}", flush=True)
                 failed_batches += 1
