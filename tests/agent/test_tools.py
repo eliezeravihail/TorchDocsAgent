@@ -45,6 +45,18 @@ def test_read_page_missing(monkeypatch):
     assert "error" in read_page("https://x")
 
 
+def test_read_page_rejects_a_heading_instead_of_a_url(monkeypatch):
+    # the planner sometimes passes a section heading it saw in a search result;
+    # read_page must not try to fetch it (No scheme supplied) — it returns a
+    # corrective error WITHOUT touching hydrate_page
+    def must_not_fetch(url):  # pragma: no cover
+        raise AssertionError("hydrate_page must not run on a non-URL")
+
+    monkeypatch.setattr("index.hydrate.hydrate_page", must_not_fetch)
+    out = read_page("Build the Neural Network > Define the Class")
+    assert "error" in out and "URL" in out["error"]
+
+
 def test_search_docs_passes_kind_to_retrieve(monkeypatch):
     import agent.tools as tools
 
