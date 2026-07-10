@@ -191,13 +191,14 @@ def respond(question: str, request: gr.Request = None):
 
     After the answer is shown, a stale-while-revalidate pass re-checks the
     CITED pages against the live docs (index/freshness.py). The answer stays
-    fully visible the whole time, with a small spinner line UNDER it while the
-    check runs — the user reads while we verify — and everything swaps in place
-    (Gradio streams the same output component; no page refresh). Clean check →
-    the spinner line simply disappears. Drift → the stored copies self-heal,
-    and the answer is regenerated from the fresh content and swapped in with a
-    note (with its own "updating…" spinner during the regeneration). Any
-    freshness failure clears the spinner and leaves the shown answer untouched.
+    fully visible the whole time, with a bare spinner (just the wheel, no
+    words) under it while the check runs — the user reads while we verify —
+    and everything swaps in place (Gradio streams the same output component;
+    no page refresh). Clean check → the spinner simply disappears. Drift → the
+    stored copies self-heal, and the answer is regenerated from the fresh
+    content and swapped in with the ↻ note (the spinner keeps turning during
+    the regeneration). Any freshness failure clears the spinner and leaves the
+    shown answer untouched.
     The first yield is the static THINKING_NOTE (immediate paint);
     gradio_client.predict returns the LAST yielded value, so the smoke test
     still gets a real answer.
@@ -238,17 +239,17 @@ def respond(question: str, request: gr.Request = None):
         if not freshness.enabled():
             return
 
-        def run_below(target, note: str):
+        def run_below(target):
             """Run `target` on a thread; while it runs, keep the ANSWER on
-            screen with an animated one-liner under it (in-place updates —
-            never a blank screen, never a page refresh)."""
+            screen with a bare spinner under it — just the wheel, no words
+            (in-place updates: never a blank screen, never a page refresh)."""
             thread = threading.Thread(target=target, daemon=True)
             thread.start()
             while True:
                 thread.join(timeout=THINKING_TICK)
                 if not thread.is_alive():
                     return
-                yield f"{md}\n\n<sub>{next(frames)} {note}</sub>"
+                yield f"{md}\n\n<sub>{next(frames)}</sub>"
 
         check: dict = {}
 
@@ -258,7 +259,7 @@ def respond(question: str, request: gr.Request = None):
             except Exception as exc:  # noqa: BLE001 — a thread exception must not vanish
                 print(f"[app] freshness check failed: {type(exc).__name__}: {exc}", flush=True)
 
-        yield from run_below(verify, "Checking these docs are still current…")
+        yield from run_below(verify)
         if not check.get("drifted"):
             yield md  # clean (or check failed): just clear the spinner line
             return
@@ -274,7 +275,7 @@ def respond(question: str, request: gr.Request = None):
             except Exception as exc:  # noqa: BLE001 — keep the original answer instead
                 print(f"[app] regeneration failed: {type(exc).__name__}: {exc}", flush=True)
 
-        yield from run_below(regenerate, "The docs changed — updating this answer…")
+        yield from run_below(regenerate)
         yield redo.get("md", md)  # a failed regeneration keeps the original
     except Exception as exc:  # noqa: BLE001 — never disturb the shown answer
         print(f"[app] freshness pass skipped: {type(exc).__name__}: {exc}", flush=True)

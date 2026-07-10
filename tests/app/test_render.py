@@ -102,15 +102,20 @@ def test_respond_regenerates_when_the_cited_docs_drifted(monkeypatch):
 def test_respond_freshness_is_silent_when_nothing_drifted(monkeypatch):
     monkeypatch.setattr("app.main.answer_routed", lambda q, **k: _cited_answer("the answer"))
     monkeypatch.setattr("index.freshness.refresh_pages", lambda urls: set())
+    from app.main import THINKING_SPINNER
+
     chunks = list(respond("how do I use SGD?"))
     assert "the answer" in chunks[-1] and "regenerated" not in chunks[-1]
-    assert "Checking" not in chunks[-1]  # the verifying line is cleared at the end
+    # the spinner under the answer is cleared once the check finishes
+    assert all(frame not in chunks[-1] for frame in THINKING_SPINNER)
 
 
 def test_respond_keeps_the_answer_visible_while_verifying(monkeypatch):
     # while the freshness check runs, the user must keep READING the answer —
-    # the spinner is a small line UNDER it, updated in place, never a blank
+    # under it just a bare spinner (the wheel, no words), updated in place
     import time
+
+    from app.main import THINKING_SPINNER
 
     monkeypatch.setattr("app.main.THINKING_TICK", 0.02)
     monkeypatch.setattr("app.main.answer_routed", lambda q, **k: _cited_answer("the answer"))
@@ -121,10 +126,13 @@ def test_respond_keeps_the_answer_visible_while_verifying(monkeypatch):
 
     monkeypatch.setattr("index.freshness.refresh_pages", slow_check)
     chunks = list(respond("how do I use SGD?"))
-    verifying = [c for c in chunks if "still current" in c]
-    assert verifying  # the check was visible, not silent
-    assert all("the answer" in c for c in verifying)  # answer stayed on screen
-    assert "Checking" not in chunks[-1]  # and the line disappears when done
+    verifying = [
+        c for c in chunks if "the answer" in c and any(f in c for f in THINKING_SPINNER)
+    ]
+    assert verifying  # the check was visible: answer + wheel together
+    # the wheel is BARE — no explanatory text rides along with it
+    assert all(c.endswith("</sub>") and "…" not in c.split("<sub>")[1] for c in verifying)
+    assert all(f not in chunks[-1] for f in THINKING_SPINNER)  # gone when done
 
 
 def test_respond_freshness_failure_never_disturbs_the_answer(monkeypatch):
