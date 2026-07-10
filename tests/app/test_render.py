@@ -104,6 +104,27 @@ def test_respond_freshness_is_silent_when_nothing_drifted(monkeypatch):
     monkeypatch.setattr("index.freshness.refresh_pages", lambda urls: set())
     chunks = list(respond("how do I use SGD?"))
     assert "the answer" in chunks[-1] and "regenerated" not in chunks[-1]
+    assert "Checking" not in chunks[-1]  # the verifying line is cleared at the end
+
+
+def test_respond_keeps_the_answer_visible_while_verifying(monkeypatch):
+    # while the freshness check runs, the user must keep READING the answer —
+    # the spinner is a small line UNDER it, updated in place, never a blank
+    import time
+
+    monkeypatch.setattr("app.main.THINKING_TICK", 0.02)
+    monkeypatch.setattr("app.main.answer_routed", lambda q, **k: _cited_answer("the answer"))
+
+    def slow_check(urls):
+        time.sleep(0.15)  # several ticks → several verifying frames
+        return set()
+
+    monkeypatch.setattr("index.freshness.refresh_pages", slow_check)
+    chunks = list(respond("how do I use SGD?"))
+    verifying = [c for c in chunks if "still current" in c]
+    assert verifying  # the check was visible, not silent
+    assert all("the answer" in c for c in verifying)  # answer stayed on screen
+    assert "Checking" not in chunks[-1]  # and the line disappears when done
 
 
 def test_respond_freshness_failure_never_disturbs_the_answer(monkeypatch):

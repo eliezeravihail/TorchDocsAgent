@@ -190,13 +190,17 @@ def respond(question: str, request: gr.Request = None):
     reads as "working", not "frozen" — then yields the finished markdown.
 
     After the answer is shown, a stale-while-revalidate pass re-checks the
-    CITED pages against the live docs (index/freshness.py): the stored copies
-    self-heal on drift, and if the grounding text really changed the answer is
-    regenerated from the fresh content and swapped in with a note. The user
-    already has an answer during all of this, and any freshness failure leaves
-    it untouched. The first yield is the static THINKING_NOTE (immediate
-    paint); gradio_client.predict returns the LAST yielded value, so the smoke
-    test still gets a real answer.
+    CITED pages against the live docs (index/freshness.py). The answer stays
+    fully visible the whole time, with a small spinner line UNDER it while the
+    check runs — the user reads while we verify — and everything swaps in place
+    (Gradio streams the same output component; no page refresh). Clean check →
+    the spinner line simply disappears. Drift → the stored copies self-heal,
+    and the answer is regenerated from the fresh content and swapped in with a
+    note (with its own "updating…" spinner during the regeneration). Any
+    freshness failure clears the spinner and leaves the shown answer untouched.
+    The first yield is the static THINKING_NOTE (immediate paint);
+    gradio_client.predict returns the LAST yielded value, so the smoke test
+    still gets a real answer.
     """
     yield THINKING_NOTE
 
@@ -221,26 +225,60 @@ def respond(question: str, request: gr.Request = None):
             time.monotonic() - started < _DRAFTING_AFTER
         ) else "Drafting your answer"
         yield f"{next(frames)} {stage}…"
-    yield result.get("md", ERROR_NOTE)
+    md = result.get("md", ERROR_NOTE)
+    yield md
 
     # ---- stale-while-revalidate: the answer is already on screen ----------
+    answer = result.get("answer")
+    if answer is None or not answer.citations:
+        return
     try:
-        answer = result.get("answer")
-        if answer is None or not answer.citations:
-            return
         from index import freshness
 
         if not freshness.enabled():
             return
-        drifted = freshness.refresh_pages([c.url for c in answer.citations])
-        if not drifted:
+
+        def run_below(target, note: str):
+            """Run `target` on a thread; while it runs, keep the ANSWER on
+            screen with an animated one-liner under it (in-place updates —
+            never a blank screen, never a page refresh)."""
+            thread = threading.Thread(target=target, daemon=True)
+            thread.start()
+            while True:
+                thread.join(timeout=THINKING_TICK)
+                if not thread.is_alive():
+                    return
+                yield f"{md}\n\n<sub>{next(frames)} {note}</sub>"
+
+        check: dict = {}
+
+        def verify():
+            try:
+                check["drifted"] = freshness.refresh_pages([c.url for c in answer.citations])
+            except Exception as exc:  # noqa: BLE001 — a thread exception must not vanish
+                print(f"[app] freshness check failed: {type(exc).__name__}: {exc}", flush=True)
+
+        yield from run_below(verify, "Checking these docs are still current…")
+        if not check.get("drifted"):
+            yield md  # clean (or check failed): just clear the spinner line
             return
+
         # the text the answer was grounded in changed → answer again from the
         # just-refreshed content and swap it in, flagged so the user knows why
-        print(f"[app] cited docs drifted ({len(drifted)}); regenerating", flush=True)
-        yield render(answer_routed(question)) + FRESHNESS_NOTE
+        print("[app] cited docs drifted; regenerating", flush=True)
+        redo: dict = {}
+
+        def regenerate():
+            try:
+                redo["md"] = render(answer_routed(question)) + FRESHNESS_NOTE
+            except Exception as exc:  # noqa: BLE001 — keep the original answer instead
+                print(f"[app] regeneration failed: {type(exc).__name__}: {exc}", flush=True)
+
+        yield from run_below(regenerate, "The docs changed — updating this answer…")
+        yield redo.get("md", md)  # a failed regeneration keeps the original
     except Exception as exc:  # noqa: BLE001 — never disturb the shown answer
         print(f"[app] freshness pass skipped: {type(exc).__name__}: {exc}", flush=True)
+        yield md  # clear any spinner line that was showing
 
 
 def build_ui():
