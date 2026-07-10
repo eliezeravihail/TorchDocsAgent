@@ -182,10 +182,10 @@ def main() -> int:
     RESULTS.parent.mkdir(exist_ok=True)
 
     def retrieve_hydrate(question: str) -> list[dict]:
-        from index.hydrate import hydrate_section
+        from index.hydrate import hydrate_sections
         from index.retrieve import retrieve
 
-        return [s for s in (hydrate_section(p) for p in retrieve(question, k=k)) if s]
+        return hydrate_sections(retrieve(question, k=k))  # concurrent, like the app
 
     import time
 

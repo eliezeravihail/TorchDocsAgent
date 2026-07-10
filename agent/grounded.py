@@ -150,9 +150,14 @@ def answer_grounded(
     """One retrieval pass → grounded answer with validated citations."""
     if retrieve_fn is None:
         from index.retrieve import retrieve as retrieve_fn
-    if hydrate_fn is None:
-        from index.hydrate import hydrate_section as hydrate_fn
 
     pointers = retrieve_fn(question, k=k)
-    sections = [s for s in (hydrate_fn(p) for p in pointers) if s]
+    if hydrate_fn is None:
+        # default path: hydrate the k sections CONCURRENTLY — on the Space each
+        # is a live page fetch, and doing them in series was the dominant latency
+        from index.hydrate import hydrate_sections
+
+        sections = hydrate_sections(pointers)
+    else:  # an injected hydrate_fn (tests) stays sequential and deterministic
+        sections = [s for s in (hydrate_fn(p) for p in pointers) if s]
     return answer_from_sections(question, sections, provider=provider, client=client)
