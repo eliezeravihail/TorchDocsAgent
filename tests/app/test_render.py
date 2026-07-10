@@ -65,3 +65,24 @@ def test_respond_streams_the_thinking_note_then_the_answer(monkeypatch):
     chunks = list(respond("how do I use SGD?"))
     assert chunks[0] == THINKING_NOTE
     assert "the answer" in chunks[-1] and chunks[-1] != THINKING_NOTE
+
+
+def test_respond_animates_the_wait_so_it_never_looks_frozen(monkeypatch):
+    # a multi-second answer must show MOVING feedback, not a single frozen line:
+    # between the note and the answer the generator emits animated spinner frames
+    import time
+
+    from app.main import THINKING_SPINNER
+
+    monkeypatch.setattr("app.main.THINKING_TICK", 0.02)  # tick fast so frames land quickly
+
+    def slow(q, **k):
+        time.sleep(0.15)  # several ticks → several frames while "drafting"
+        return Answer(answer_md="the answer")
+
+    monkeypatch.setattr("app.main.answer_routed", slow)
+    chunks = list(respond("how do I use SGD?"))
+    assert chunks[0] == THINKING_NOTE and "the answer" in chunks[-1]
+    frames = chunks[1:-1]
+    assert frames  # the wait produced animation, not a frozen note
+    assert any(any(c in f for c in THINKING_SPINNER) for f in frames)
