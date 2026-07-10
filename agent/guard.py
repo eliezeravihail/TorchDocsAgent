@@ -34,8 +34,24 @@ LLM or a live database.
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Callable
 from typing import NamedTuple
+
+# any character outside 7-bit ASCII → not English (Hebrew/Arabic/Cyrillic/CJK/…)
+_NON_LATIN = re.compile(r"[^\x00-\x7f]")
+
+
+def looks_english(text: str) -> bool:
+    """Cheap heuristic: mostly-ASCII text is treated as English (no LLM call).
+
+    The corpus and embedder are English-only, so the guard bounces anything
+    else (REFUSAL_NON_ENGLISH) rather than pay a translation round-trip; this
+    is that check. A few stray non-Latin chars (a smart quote, an emoji) are
+    tolerated so an otherwise-English question isn't rejected on punctuation.
+    """
+    non_latin = len(_NON_LATIN.findall(text))
+    return non_latin <= max(2, len(text) * 0.1)
 
 # cosine distance (pgvector <=>, 0=identical..2=opposite). A question whose
 # nearest doc chunk is farther than this is treated as off-topic.
@@ -125,7 +141,7 @@ def guard(
         return Verdict(False, "too_long", REFUSAL_TOO_LONG)
 
     if looks_english_fn is None:
-        from agent.translate import looks_english as looks_english_fn
+        looks_english_fn = looks_english
     if not looks_english_fn(question):
         # English-only embedder: ask for English instead of a slow translation
         print("[guard] non-English question; asking the user to rephrase", flush=True)

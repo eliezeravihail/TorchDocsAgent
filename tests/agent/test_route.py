@@ -87,21 +87,15 @@ def test_uncited_grounded_answer_escalates_to_the_loop(monkeypatch):
     assert calls == ["grounded", "loop"]
 
 
-def test_grounded_retrieval_sees_the_english_query(monkeypatch):
-    # the corpus/embedder are English-only; the router hands retrieval the
-    # cached translation while the generation keeps the original question
+def test_grounded_path_gets_the_question_verbatim(monkeypatch):
+    # there is no translation step anymore — the guard bounces non-English input
+    # up front, so the router hands the grounded path the question as received
     seen = {}
-    monkeypatch.setattr("agent.translate.translate_to_english", lambda q, **kw: "english q")
 
-    def fake_grounded(q, retrieve_fn=None, **kw):
+    def fake_grounded(q, **kw):
         seen["question"] = q
-        retrieve_fn("ignored", k=8)
         return _grounded_answer()
 
     monkeypatch.setattr("agent.grounded.answer_grounded", fake_grounded)
-    monkeypatch.setattr(
-        "index.retrieve.retrieve", lambda q, k=8: seen.setdefault("retrieved", q) and []
-    )
-    answer_routed("שאלה בעברית על טנסורים")
-    assert seen["question"] == "שאלה בעברית על טנסורים"  # answer in the user's language
-    assert seen["retrieved"] == "english q"  # search in the corpus's language
+    answer_routed("how do I use SGD with momentum")
+    assert seen["question"] == "how do I use SGD with momentum"

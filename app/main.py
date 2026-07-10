@@ -1,9 +1,9 @@
 """TorchDocs Agent — Gradio web app (M5).
 
 A long-lived server: the embedding model loads once at startup, so each
-question is answered in seconds (unlike the batch Actions runs). Ask in any
-language; the agent translates the query, searches the PyTorch docs, and
-answers with clickable citations.
+question is answered in seconds (unlike the batch Actions runs). Ask a PyTorch
+question in English; the agent searches the docs and answers with clickable
+citations.
 
 Concurrent by default: each question is answered from request-local state
 (agent/loop.py builds fresh sections/transcript/budgets per call), so many
@@ -113,8 +113,8 @@ def _rate_limited(client_id: str) -> bool:
 def _warm_up() -> None:
     """Load the embedding model once so the first question isn't slow.
 
-    This also covers the guard: its topicality check embeds the (translated)
-    question with the same model.
+    This also covers the guard: its topicality check embeds the question with
+    the same model.
     """
     try:
         from index.embed import embed_query

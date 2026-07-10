@@ -21,13 +21,13 @@ The agent runs as a live web app on Hugging Face Spaces — nothing to install:
 
 **▶️ https://huggingface.co/spaces/eliezeravihail/torchdocs-agent**
 
-Type a question and press **Ask** (or Enter):
+Type a question in English and press **Ask** (or Enter):
 
-- Ask in **any language** — the query is translated to English for retrieval, and the answer comes back grounded in the docs.
+- Answers are served instantly from content stored in the index, then the cited pages are **revalidated against the live docs** in the background — the index self-heals and the answer is corrected if the docs changed.
 - Every answer lists the **exact documentation pages** it used as clickable citations, plus a link to the source license.
 - Questions about implementation internals (source code) are **referred out** to GitHub / DeepWiki rather than guessed.
 
-Try: *"How do I use torch.optim.SGD with momentum?"*, *"איזה סקדולרים נתמכים בטורץ'?"*, *"How do I build a CNN to classify images?"*
+Try: *"How do I use torch.optim.SGD with momentum?"*, *"What LR schedulers are supported?"*, *"How do I build a CNN to classify images?"*
 
 ### Deploying your own Space
 

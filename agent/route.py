@@ -56,27 +56,19 @@ def needs_loop(english_question: str) -> bool:
 
 
 def answer_routed(question: str, provider: str | None = None, client=None) -> Answer:
-    """Answer via the cheapest adequate path; escalate when grounding fails."""
-    from agent.translate import translate_to_english
+    """Answer via the cheapest adequate path; escalate when grounding fails.
 
-    english = translate_to_english(question)  # cached — the guard translated already
-    if needs_loop(english):
+    The guard (app.main / scripts.ask) has already bounced non-English input, so
+    the question is English here — no translation step.
+    """
+    if needs_loop(question):
         from agent.loop import answer_agentic
 
         return answer_agentic(question, provider=provider, client=client)
 
     from agent.grounded import answer_grounded
-    from index.retrieve import retrieve
 
-    answer = answer_grounded(
-        question,
-        provider=provider,
-        client=client,
-        # retrieval must see English (the corpus and embedder are English-only);
-        # the generation prompt keeps the original question so the answer comes
-        # back in the user's language
-        retrieve_fn=lambda _q, k=8: retrieve(english, k=k),
-    )
+    answer = answer_grounded(question, provider=provider, client=client)
     if answer.citations:
         return answer
 

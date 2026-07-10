@@ -2,9 +2,10 @@
 
 Usage:  python scripts/calibrate_guard.py          (needs NEON_URL + LLM env)
 
-Runs three question groups through the exact guard path (translate → embed →
+Runs three question groups through the guard's topicality path (embed →
 top_distance) and prints every distance, sorted, plus per-group stats and a
-suggested threshold:
+suggested threshold. (Non-English input is bounced by the guard's language
+gate before topicality, so this only calibrates the English distance cutoff.)
 
 - on-topic    — the 100 valid questions (eval/questions_v1.jsonl): real
                 PyTorch questions, all grounded in the docs; must ALL pass.
@@ -44,15 +45,11 @@ BORDERLINE = [
 ]
 
 
-def _distances(questions: list[str]) -> list[tuple[float | None, str, str]]:
-    from agent.translate import translate_to_english
+def _distances(questions: list[str]) -> list[tuple[float | None, str]]:
     from index.retrieve import top_distance
 
-    out = []
-    for q in questions:
-        english = translate_to_english(q)
-        out.append((top_distance(english), q, english))
-    return out
+    # the guard embeds the raw question (no translation step); measure the same
+    return [(top_distance(q), q) for q in questions]
 
 
 def main() -> int:
@@ -64,12 +61,11 @@ def main() -> int:
     stats: dict[str, list[float]] = {}
     for name, questions in groups:
         rows = _distances(questions)
-        dists = [d for d, _, _ in rows if d is not None]
+        dists = [d for d, _ in rows if d is not None]
         stats[name] = dists
         print(f"\n=== {name} ({len(rows)} questions) " + "=" * 30)
-        for d, q, english in sorted(rows, key=lambda r: (r[0] is None, r[0])):
-            translated = f"  → {english!r}" if english != q else ""
-            print(f"  {'-' if d is None else f'{d:.3f}'}  {q!r}{translated}")
+        for d, q in sorted(rows, key=lambda r: (r[0] is None, r[0])):
+            print(f"  {'-' if d is None else f'{d:.3f}'}  {q!r}")
         if dists:
             print(f"  min={min(dists):.3f}  max={max(dists):.3f}  "
                   f"mean={sum(dists) / len(dists):.3f}")
