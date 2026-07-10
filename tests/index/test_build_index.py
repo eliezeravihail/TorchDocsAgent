@@ -8,6 +8,8 @@ a full re-embed) still purges deleted chunks, the bug this test guards.
 
 from types import SimpleNamespace
 
+import pytest
+
 import index.db as db
 import index.embed as embed
 from index.embed import EMBED_RECIPE, build_index, chunk_key
@@ -143,3 +145,11 @@ def test_backfill_content_updates_only_rows_missing_content():
     conn = Conn()
     _backfill_content(conn, units)
     assert conn.updates == [("body text", empty_key)]  # only the empty row, with its text
+
+
+def test_build_index_refuses_empty_snapshot(monkeypatch):
+    # a cache-miss --skip-crawl (empty snapshot) must abort BEFORE the purge —
+    # otherwise every db row looks stale and the whole live index gets wiped
+    monkeypatch.setattr(embed, "iter_corpus_units", lambda corpus_dir=None: iter([]))
+    with pytest.raises(SystemExit):
+        build_index("v1", embed_fn=lambda texts: [])

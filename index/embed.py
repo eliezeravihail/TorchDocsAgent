@@ -241,6 +241,14 @@ def build_index(index_version: str, corpus_dir: Path = CORPUS_DIR, embed_fn=None
 
     embed_fn = embed_fn or embed_texts
     units = list(iter_corpus_units(corpus_dir))
+    if not units:
+        # an empty snapshot would make EVERY db row "stale" and the purge below
+        # would wipe the whole live index. Refuse — a crawl must run first. This
+        # guards --skip-crawl runs (e.g. the Backfill workflow) against a cache miss.
+        raise SystemExit(
+            "refusing to embed: corpus snapshot is empty (no pages found under the "
+            "snapshot dir) — run a crawl first; aborting so the live index is not purged"
+        )
     with connect() as conn:
         ensure_schema(conn)
         from index.db import get_meta, set_meta
