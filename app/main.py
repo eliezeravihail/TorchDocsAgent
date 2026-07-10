@@ -17,6 +17,7 @@ Deploy:       Hugging Face Spaces (this file is the Space entrypoint).
 
 from __future__ import annotations
 
+import itertools
 import os
 import threading
 import time
@@ -69,6 +70,15 @@ BUSY_NOTE = "You're asking faster than I can answer — give it a moment and try
 # heavy path (guard embed → retrieval → LLM) takes a few seconds, so immediate
 # feedback is the difference between "is it broken?" and "it's working".
 THINKING_NOTE = "🔎 Searching the PyTorch docs and drafting an answer…"
+# The answer is now a fast retrieval + a ~5-8s LLM call (hydration used to be
+# the long pole; it is served from the DB now). We cannot cheaply stream the
+# tokens — the answer is a validated JSON object, not free prose — so instead
+# the wait is ANIMATED: a spinner that ticks every THINKING_TICK seconds and a
+# stage label, so a multi-second wait reads as "working", never "frozen".
+THINKING_SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+THINKING_TICK = 0.6  # seconds between animation frames
+# retrieval+hydration is sub-second now, so after this the time is all LLM
+_DRAFTING_AFTER = 1.5
 # Keep the phrase "went wrong" — the post-deploy smoke test treats it as the
 # failure marker (scripts/smoke_space.py). The real exception goes to the logs;
 # the user never sees hosts, model slugs, or config internals.
@@ -167,16 +177,40 @@ def _pipeline(question: str, request: gr.Request = None) -> str:
 
 
 def respond(question: str, request: gr.Request = None):
-    """UI entrypoint: show the thinking indicator immediately, then the answer.
+    """UI entrypoint: show a LIVE thinking indicator, then the answer.
 
-    A generator so Gradio streams the placeholder the instant a question is
-    submitted (and pulses the output while the pipeline runs), then swaps in the
-    finished markdown — the difference between "is it stuck?" and "it's working"
-    on the multi-second heavy path. gradio_client.predict returns the LAST
-    yielded value, so the post-deploy smoke test still receives the real answer.
+    A generator so Gradio streams feedback the instant a question is submitted.
+    The pipeline runs on a worker thread while this generator emits an animated
+    spinner + stage label every THINKING_TICK seconds — so the multi-second wait
+    reads as "working", not "frozen" — then yields the finished markdown. The
+    first yield is the static THINKING_NOTE (immediate paint); gradio_client.
+    predict returns the LAST yielded value, so the smoke test still gets the
+    real answer.
     """
     yield THINKING_NOTE
-    yield _pipeline(question, request)
+
+    result: dict[str, str] = {}
+
+    def work():
+        try:
+            result["md"] = _pipeline(question, request)
+        except Exception as exc:  # noqa: BLE001 — the UI must never hang on a crash
+            print(f"[app] pipeline thread failed: {type(exc).__name__}: {exc}", flush=True)
+            result["md"] = ERROR_NOTE
+
+    worker = threading.Thread(target=work, daemon=True)
+    worker.start()
+    frames = itertools.cycle(THINKING_SPINNER)
+    started = time.monotonic()
+    while True:
+        worker.join(timeout=THINKING_TICK)  # wait a tick (or finish sooner)
+        if not worker.is_alive():
+            break
+        stage = "Searching the PyTorch docs" if (
+            time.monotonic() - started < _DRAFTING_AFTER
+        ) else "Drafting your answer"
+        yield f"{next(frames)} {stage}…"
+    yield result.get("md", ERROR_NOTE)
 
 
 def build_ui():
