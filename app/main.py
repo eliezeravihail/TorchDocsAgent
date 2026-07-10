@@ -83,6 +83,12 @@ _DRAFTING_AFTER = 1.5
 # failure marker (scripts/smoke_space.py). The real exception goes to the logs;
 # the user never sees hosts, model slugs, or config internals.
 ERROR_NOTE = "⚠️ Something went wrong answering that. Please try again in a moment."
+# Appended when the post-answer freshness pass found the cited docs drifted and
+# regenerated the answer from the just-refreshed content (index/freshness.py).
+FRESHNESS_NOTE = (
+    "\n\n<sub>↻ The docs changed since they were last indexed — this answer was "
+    "regenerated from the latest content.</sub>"
+)
 
 _RATE_LOCK = threading.Lock()
 _RATE_BUCKETS: dict[str, deque[float]] = defaultdict(deque)
@@ -138,8 +144,13 @@ def render(answer: Answer) -> str:
     return "\n".join(parts)
 
 
-def _pipeline(question: str, request: gr.Request = None) -> str:
-    """The full answer pipeline → final markdown string (no UI concerns)."""
+def _pipeline(question: str, request: gr.Request = None, out: dict | None = None) -> str:
+    """The full answer pipeline → final markdown string (no UI concerns).
+
+    `out` (optional) receives the Answer object under "answer" when one was
+    generated — respond()'s freshness pass needs the citations, and returning a
+    tuple would break every caller that treats the result as markdown.
+    """
     question = (question or "").strip()
     if not question:
         return "Ask me something about PyTorch."
@@ -160,6 +171,8 @@ def _pipeline(question: str, request: gr.Request = None) -> str:
         # question→answer latency is the core UX metric — log it per request so
         # the Space logs show real p50/p95, not just the eval's sampled number
         print(f"[app] answered in {time.monotonic() - started:.1f}s", flush=True)
+        if out is not None:
+            out["answer"] = answer
         return render(answer)
     except Exception as exc:  # noqa: BLE001 — never crash the UI
         # the real error goes to the logs; the user gets a generic line, since
@@ -174,18 +187,24 @@ def respond(question: str, request: gr.Request = None):
     A generator so Gradio streams feedback the instant a question is submitted.
     The pipeline runs on a worker thread while this generator emits an animated
     spinner + stage label every THINKING_TICK seconds — so the multi-second wait
-    reads as "working", not "frozen" — then yields the finished markdown. The
-    first yield is the static THINKING_NOTE (immediate paint); gradio_client.
-    predict returns the LAST yielded value, so the smoke test still gets the
-    real answer.
+    reads as "working", not "frozen" — then yields the finished markdown.
+
+    After the answer is shown, a stale-while-revalidate pass re-checks the
+    CITED pages against the live docs (index/freshness.py): the stored copies
+    self-heal on drift, and if the grounding text really changed the answer is
+    regenerated from the fresh content and swapped in with a note. The user
+    already has an answer during all of this, and any freshness failure leaves
+    it untouched. The first yield is the static THINKING_NOTE (immediate
+    paint); gradio_client.predict returns the LAST yielded value, so the smoke
+    test still gets a real answer.
     """
     yield THINKING_NOTE
 
-    result: dict[str, str] = {}
+    result: dict = {}
 
     def work():
         try:
-            result["md"] = _pipeline(question, request)
+            result["md"] = _pipeline(question, request, out=result)
         except Exception as exc:  # noqa: BLE001 — the UI must never hang on a crash
             print(f"[app] pipeline thread failed: {type(exc).__name__}: {exc}", flush=True)
             result["md"] = ERROR_NOTE
@@ -203,6 +222,25 @@ def respond(question: str, request: gr.Request = None):
         ) else "Drafting your answer"
         yield f"{next(frames)} {stage}…"
     yield result.get("md", ERROR_NOTE)
+
+    # ---- stale-while-revalidate: the answer is already on screen ----------
+    try:
+        answer = result.get("answer")
+        if answer is None or not answer.citations:
+            return
+        from index import freshness
+
+        if not freshness.enabled():
+            return
+        drifted = freshness.refresh_pages([c.url for c in answer.citations])
+        if not drifted:
+            return
+        # the text the answer was grounded in changed → answer again from the
+        # just-refreshed content and swap it in, flagged so the user knows why
+        print(f"[app] cited docs drifted ({len(drifted)}); regenerating", flush=True)
+        yield render(answer_routed(question)) + FRESHNESS_NOTE
+    except Exception as exc:  # noqa: BLE001 — never disturb the shown answer
+        print(f"[app] freshness pass skipped: {type(exc).__name__}: {exc}", flush=True)
 
 
 def build_ui():
