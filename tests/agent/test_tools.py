@@ -33,7 +33,8 @@ def test_search_docs_shape(monkeypatch):
     )
     monkeypatch.setattr(
         "index.hydrate.hydrate_section",
-        lambda p: {**p, "content": "SGD implements gradient descent"},
+        # hydrate_sections calls hydrate_section(pointer, corpus_dir) — tolerate the arg
+        lambda p, *a, **k: {**p, "content": "SGD implements gradient descent"},
     )
     result = tools.search_docs("how do I use SGD")
     assert result["sections"][0]["content"].startswith("SGD")

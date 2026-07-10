@@ -77,6 +77,29 @@ def hydrate_section(pointer: dict, corpus_dir: Path = CORPUS_DIR) -> dict | None
     return None
 
 
+def hydrate_sections(
+    pointers: list[dict], corpus_dir: Path = CORPUS_DIR, max_workers: int = 8
+) -> list[dict]:
+    """Hydrate many pointers CONCURRENTLY, preserving retrieval order.
+
+    On a deployed Space (no bundled snapshot) each hydrate_section does a live
+    page fetch; doing k of them one-after-another was the dominant answer
+    latency (measured p50≈12s, one outlier 69s). The fetches are I/O-bound and
+    independent, so a thread pool collapses k network round-trips into roughly
+    one. Retrieval order is preserved (rank feeds the answer context) and gone
+    sections (None) are dropped, so the result is identical to the sequential
+    comprehension it replaces — only faster.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    pointers = list(pointers)
+    if not pointers:
+        return []
+    with ThreadPoolExecutor(max_workers=min(max_workers, len(pointers))) as pool:
+        hydrated = pool.map(lambda p: hydrate_section(p, corpus_dir), pointers)
+    return [s for s in hydrated if s]
+
+
 def hydrate_page(url: str, corpus_dir: Path = CORPUS_DIR) -> dict | None:
     """Whole page markdown; oversized pages return their heading outline instead."""
     loaded = _load(url, corpus_dir)

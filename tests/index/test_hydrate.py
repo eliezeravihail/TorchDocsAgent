@@ -1,4 +1,4 @@
-from index.hydrate import hydrate_page, hydrate_section
+from index.hydrate import hydrate_page, hydrate_section, hydrate_sections
 from ingest.crawl import save_page
 
 URL = "https://docs.pytorch.org/docs/stable/optim.html"
@@ -23,6 +23,23 @@ def test_hydrate_section_returns_matching_content(tmp_path):
 def test_hydrate_section_missing_page_returns_none(tmp_path, monkeypatch):
     monkeypatch.setattr("index.hydrate._LIVE", False)  # no live fallback in this test
     assert hydrate_section({"url": URL, "heading_path": "x"}, tmp_path) is None
+
+
+def test_hydrate_sections_preserves_order_and_drops_gone(tmp_path, monkeypatch):
+    # the concurrent hydrator must return sections in RETRIEVAL order (rank feeds
+    # the answer context) and drop the ones that hydrate to None — same contract
+    # as the sequential comprehension it replaced, just parallel
+    def fake(pointer, corpus_dir):
+        return None if pointer["url"] == "gone" else {**pointer, "content": pointer["url"]}
+
+    monkeypatch.setattr("index.hydrate.hydrate_section", fake)
+    pointers = [{"url": "a"}, {"url": "gone"}, {"url": "b"}, {"url": "c"}]
+    out = hydrate_sections(pointers, tmp_path)
+    assert [s["url"] for s in out] == ["a", "b", "c"]  # order kept, 'gone' dropped
+
+
+def test_hydrate_sections_empty_is_empty():
+    assert hydrate_sections([]) == []
 
 
 def test_hydrate_section_heading_gone_returns_none_not_preamble(tmp_path):

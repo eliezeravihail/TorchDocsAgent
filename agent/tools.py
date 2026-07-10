@@ -55,7 +55,7 @@ def search_docs(
     unrestricted search rather than failing the tool call.
     """
     from agent.translate import translate_to_english
-    from index.hydrate import hydrate_section
+    from index.hydrate import hydrate_sections
     from index.retrieve import retrieve
 
     if kind is not None and kind not in SEARCH_KINDS:
@@ -63,7 +63,7 @@ def search_docs(
         kind = None
     english = translate_to_english(query)
     pointers = retrieve(english, k=k, library=library, kind=kind)
-    sections = [s for s in (hydrate_section(p) for p in pointers) if s]
+    sections = hydrate_sections(pointers)  # concurrent — each is a live fetch on the Space
     print(
         f"[search_docs] {english!r} (kind={kind}) → {len(pointers)} pointers, "
         f"{len(sections)} hydrated",
