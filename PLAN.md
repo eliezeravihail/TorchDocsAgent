@@ -137,6 +137,29 @@ Tasks marked `[CORE]` are mandatory; `[STRETCH]` — only if time remains. Do no
   ✔ Done when: a repeated question returns from cache in <200ms, and hit-rate is measured.
 - [ ] [STRETCH] Semantic cache (vector similarity between questions) — only after the exact cache works.
 
+  **Design decision (2026-07-10) — answer cache: deferred, and if built, memoization only.**
+  Discussed embedding *answers* in a separate store (semantic answer cache) as a
+  latency lever. Rejected the semantic form and deferred the exact form. Reasoning,
+  so we don't re-derive it:
+  - **No semantic answer store.** Embedding answers and serving the nearest one to a
+    *different* question collapses provenance (the source becomes the agent, not the
+    docs), and — the real danger — risks a synthetic self-loop: if a cached answer is
+    ever fed back as context, the model feeds on its own output and errors compound.
+    A semantic store also has no honest answer to "how do we know a cached answer is
+    still good?".
+  - **If anything, memoization only:** key on the *question* (high-similarity /
+    normalized), never a loose semantic match. Two safety anchors, both already built:
+    (1) **hard firewall** — the cache is a front-door short-circuit (hit → verbatim
+    answer, miss → normal pipeline); a cache entry is *never* injected as context, which
+    is what kills the self-loop; (2) **freshness for free** — a hit runs through the
+    *same* stale-while-revalidate pass we already run: revalidate the cited pages, and on
+    drift the one event both heals the chunk and evicts+regenerates the answer. Residual
+    gap: uncited drift (a newly-added doc page that would now be a better source is not
+    caught by cited-page revalidation) → backstop with a **TTL upper bound** per entry.
+  - **Deferred now:** a separate answer table + embeddings costs pgvector storage on the
+    free Neon tier, and we have not measured question repetition (hit-rate) to justify it.
+    Measure hit-rate on the eval/synthetic question set *before* building anything.
+
 **Gate to M5:** one complete eval report + one trace that can be shown in an interview.
 
 ---
