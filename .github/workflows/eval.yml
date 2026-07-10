@@ -44,12 +44,13 @@ on:
         type: string
         default: "8"
       provider:
-        description: "agentic/judge: LLM provider (gemini free = 20 req/day per
-          model; OpenRouter free = 50/day without credits, far higher with
-          credit; failures fall through to the other provider)"
+        description: "agentic/judge: LLM provider. Default openai-compat = PAID
+          hy3 (account credit) — reliable, no daily cap. gemini free is only
+          20 req/day per model, so it 429s (RESOURCE_EXHAUSTED) partway through
+          the judge set; failures still fall through to the other provider."
         type: choice
-        options: [gemini, openai-compat]
-        default: gemini
+        options: [openai-compat, gemini]
+        default: openai-compat
       llm:
         description: "agentic/judge: OpenRouter slugs (fallback chain). Primary
           is PAID tencent/hy3 (spends account credit) — no free-tier queue; the

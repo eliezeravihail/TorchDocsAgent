@@ -153,7 +153,12 @@ def _pipeline(question: str, request: gr.Request = None) -> str:
     try:
         # routed: simple questions take the 1-2-call grounded path (seconds),
         # multi-source shapes get the full tool loop (see agent/route.py)
-        return render(answer_routed(question))
+        started = time.monotonic()
+        answer = answer_routed(question)
+        # question→answer latency is the core UX metric — log it per request so
+        # the Space logs show real p50/p95, not just the eval's sampled number
+        print(f"[app] answered in {time.monotonic() - started:.1f}s", flush=True)
+        return render(answer)
     except Exception as exc:  # noqa: BLE001 — never crash the UI
         # the real error goes to the logs; the user gets a generic line, since
         # an exception string can leak hosts, model slugs, and config internals
