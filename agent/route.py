@@ -6,8 +6,8 @@ wall-clock — unacceptable for the common case. But the loop's value is real
 only for MULTI-SOURCE questions (catalog / compare / recipe / internals),
 where it assembles pages one search can't: measured agentic coverage 0.567 vs
 0.133 single-shot. A usage question ("how do I use SGD with momentum?") is
-answered by ONE retrieval pass + ONE generation — now backed by the reranked
-retrieval (recall@8 0.84).
+answered by ONE retrieval pass + ONE generation — backed by the hybrid
+per-kind RRF retrieval (recall@8 ~0.81 on real content).
 
 So: a zero-LLM-call heuristic sends multi-source shapes to the loop and
 everything else to the grounded single-shot path. The heuristic is allowed to
