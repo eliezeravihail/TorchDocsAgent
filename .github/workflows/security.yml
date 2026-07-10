@@ -1,0 +1,58 @@
+name: Security scan
+
+# Trivy scans the repo filesystem for:
+#   - vuln     — known-vulnerable Python dependencies (requirements.txt)
+#   - secret   — hardcoded credentials / API keys committed by mistake
+#   - misconfig — workflow / config hardening issues
+# Findings are reported to the Security tab (code scanning), never used to
+# block a merge — a CVE in a third-party dep you can't patch on the spot must
+# not gate CI. The weekly run matters most: new CVEs are disclosed against
+# dependencies that never changed, so a scan only on push would miss them.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC — CVEs land continuously
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write # upload the SARIF report to the Security tab
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  trivy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trivy scan → readable table in the run log
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true # only vulns with a fix available — actionable ones
+          format: table
+          exit-code: "0" # report-only: a dependency CVE must not block the merge
+
+      - name: Trivy scan → SARIF for the Security tab
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scanners: vuln,secret,misconfig
+          ignore-unfixed: true
+          format: sarif
+          output: trivy-results.sarif
+          exit-code: "0"
+          skip-setup-trivy: true # reuse the vuln DB the table step already pulled
+
+      - name: Upload SARIF to the Security tab
+        if: always() # upload even when the scan surfaced findings
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
