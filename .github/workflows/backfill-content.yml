@@ -1,0 +1,60 @@
+name: Backfill content
+
+# One-shot: fill the chunks.content column (added in #97) for the existing rows
+# WITHOUT a full re-crawl. The embed step already runs _backfill_content; this
+# runs just that step against the CACHED corpus snapshot, so it takes minutes
+# instead of the ~2h a full Build Index spends re-crawling. Safe to re-run:
+# content, once set, is never '' again, so the backfill probe then finds nothing.
+#
+# Guarded twice against wiping the index on a cache miss: a snapshot-presence
+# check here, and embed.build_index() refuses to run on an empty snapshot.
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "embedding model — MUST match the live index"
+        type: string
+        default: "BAAI/bge-small-en-v1.5"
+
+permissions:
+  contents: read
+
+concurrency: build-index # shares the DB-writer lock with Build Index
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Restore corpus snapshot (from the last Build Index)
+        uses: actions/cache/restore@v4
+        with:
+          path: _corpus
+          key: backfill-${{ github.run_id }} # never matches → always uses restore-keys
+          restore-keys: corpus-
+      - name: Cache the local embedding model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-${{ inputs.model }}
+      - run: pip install -e .
+      - name: Verify the snapshot restored (never purge against an empty snapshot)
+        run: |
+          count=$(find _corpus -name '*.md' 2>/dev/null | wc -l)
+          echo "snapshot pages: $count"
+          if [ "$count" -lt 100 ]; then
+            echo "::error::corpus snapshot missing or too small ($count pages) — the cache "\
+                 "was evicted. Run Build Index (full) instead; aborting to protect the index."
+            exit 1
+          fi
+      - name: Fill content from the snapshot (embed --skip-crawl → backfill)
+        env:
+          PYTHONUNBUFFERED: "1"
+          NEON_URL: ${{ secrets.NEON }}
+          TORCHDOCS_EMBED_MODEL: ${{ inputs.model }}
+        run: python scripts/build_index.py --skip-crawl
