@@ -1,13 +1,19 @@
 name: Security scan
 
 # Trivy scans the repo filesystem for:
-#   - vuln     — known-vulnerable Python dependencies (requirements.txt)
+#   - vuln     — known-vulnerable Python dependencies
 #   - secret   — hardcoded credentials / API keys committed by mistake
 #   - misconfig — workflow / config hardening issues
 # Findings are reported to the Security tab (code scanning), never used to
 # block a merge — a CVE in a third-party dep you can't patch on the spot must
 # not gate CI. The weekly run matters most: new CVEs are disclosed against
 # dependencies that never changed, so a scan only on push would miss them.
+#
+# NOTE on the pip freeze: our requirements.txt uses >= (loose) constraints, and
+# Trivy's vuln matcher needs PINNED versions — a loose file scans as "0
+# packages" (it silently checks nothing). So we install the project and freeze
+# the RESOLVED versions into a requirements.txt Trivy recognises; the scan of
+# the repo root then picks it up and checks the actual dependency tree.
 on:
   push:
     branches: [main]
@@ -29,11 +35,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Freeze resolved dependency versions (Trivy needs pinned versions)
+        run: |
+          pip install -e .
+          mkdir -p .trivy-deps
+          # pinned, editable project excluded → the transitive tree Trivy can match
+          pip freeze --exclude-editable > .trivy-deps/requirements.txt
+          echo "resolved $(wc -l < .trivy-deps/requirements.txt) pinned packages for scanning"
 
       - name: Trivy scan → readable table in the run log
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
+          scan-ref: .
           scanners: vuln,secret,misconfig
           severity: HIGH,CRITICAL
           ignore-unfixed: true # only vulns with a fix available — actionable ones
@@ -44,6 +63,7 @@ jobs:
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
+          scan-ref: .
           scanners: vuln,secret,misconfig
           ignore-unfixed: true
           format: sarif
@@ -53,6 +73,6 @@ jobs:
 
       - name: Upload SARIF to the Security tab
         if: always() # upload even when the scan surfaced findings
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-results.sarif
