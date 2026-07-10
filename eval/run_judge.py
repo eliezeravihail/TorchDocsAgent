@@ -187,14 +187,21 @@ def main() -> int:
 
         return [s for s in (hydrate_section(p) for p in retrieve(question, k=k)) if s]
 
+    import time
+
     records = []
     print(f"eval set: {EVAL_SET}  ({len(questions)} questions), k={k}")
-    print(f"{'id':<6}{'faith':<8}{'rel':<8}{'cite':<8}overall")
+    print(f"{'id':<6}{'faith':<8}{'rel':<8}{'cite':<8}{'overall':<10}latency")
     for q in questions:
         qid, question = q["id"], q["question"]
         try:
+            # time only what the USER waits on — retrieval + answer generation
+            # (the judge call is eval-only and excluded). This is the core UX
+            # number: question in → answer out.
+            t0 = time.monotonic()
             sections = retrieve_hydrate(question)
             answer = answer_from_sections(question, sections)
+            latency = time.monotonic() - t0
             context = build_context(sections)
             scores = normalized_scores(judge_answer(question, context, answer))
         except Exception as exc:  # noqa: BLE001 — record and continue, never lose the run
@@ -202,11 +209,12 @@ def main() -> int:
             records.append({"id": qid, "error": str(exc)})
             continue
         print(f"{qid:<6}{scores['faithfulness']:<8.2f}{scores['answer_relevance']:<8.2f}"
-              f"{scores['citation_correctness']:<8.2f}{scores['overall']:.2f}")
+              f"{scores['citation_correctness']:<8.2f}{scores['overall']:<10.2f}{latency:.1f}s")
         records.append({
             "id": qid,
             "question": question,
             "scores": scores,
+            "latency_s": round(latency, 2),
             "citations": [c.url for c in answer.citations],
         })
 
@@ -223,6 +231,15 @@ def main() -> int:
     else:
         print("\nno answers were scored — nothing measured")
         return 1
+
+    # UX latency: question in → answer out (the thing the user actually waits on).
+    lats = sorted(r["latency_s"] for r in records if "latency_s" in r)
+    if lats:
+        def pct(p):
+            return lats[min(len(lats) - 1, int(p * len(lats)))]
+        print(f"\nanswer latency (question→answer, {len(lats)} answers): "
+              f"p50={pct(0.5):.1f}s  p95={pct(0.95):.1f}s  max={lats[-1]:.1f}s  "
+              f"mean={sum(lats) / len(lats):.1f}s")
     print(f"results → {RESULTS}")
     return 0
 

@@ -31,12 +31,14 @@ from dotenv import load_dotenv
 
 EVAL_DIR = Path(__file__).parent
 EVAL_SET = os.environ.get("TORCHDOCS_EVAL_SET", "v1")
-# ablation runs (k≠8, rerank off) must not overwrite — masquerade as — the
-# standard results file; suffix the variant, mirroring run_agentic's _firstN
 _K = os.environ.get("TORCHDOCS_RETRIEVAL_K", "8")
-_RERANK_OFF = os.environ.get("TORCHDOCS_RERANK", "1") in ("0", "false", "no")
-_VARIANT = ("" if _K == "8" else f"_k{_K}") + ("_norerank" if _RERANK_OFF else "")
-RESULTS = EVAL_DIR / "results" / f"retrieval_{EVAL_SET}{_VARIANT}.jsonl"
+
+
+def _results_path(rerank_on: bool) -> Path:
+    """Standard file for the reranked run; a _norerank sibling for the ablation
+    (a k≠8 sweep suffixes k too) — so neither masquerades as the other."""
+    variant = ("" if _K == "8" else f"_k{_K}") + ("" if rerank_on else "_norerank")
+    return EVAL_DIR / "results" / f"retrieval_{EVAL_SET}{variant}.jsonl"
 
 
 def load_questions() -> dict[str, dict]:
@@ -84,16 +86,19 @@ def question_metrics(expected: list[list[str]], pointers: list[dict]) -> dict:
     }
 
 
-def main() -> int:
-    load_dotenv()
+def _measure(questions: dict[str, dict], k: int, *, rerank_on: bool) -> dict:
+    """One retrieval pass over the set at a fixed rerank setting.
+
+    The rerank on/off toggle is TORCHDOCS_RERANK, which retrieve() reads (via
+    index.rerank.enabled()) fresh on every call — so flipping the env here runs
+    the exact production path with the reranker in or out. Returns the aggregate
+    plus per-question records (also written to the pass's own results file)."""
+    os.environ["TORCHDOCS_RERANK"] = "1" if rerank_on else "0"
     from index.retrieve import retrieve
 
-    k = int(os.environ.get("TORCHDOCS_RETRIEVAL_K", "8"))
-    questions = load_questions()
-
-    RESULTS.parent.mkdir(exist_ok=True)
+    label = "rerank ON " if rerank_on else "rerank OFF"
     records, recalls, mrrs = [], [], []
-    print(f"eval set: {EVAL_SET}  ({len(questions)} questions)")
+    print(f"\n── {label} ──  eval set: {EVAL_SET} ({len(questions)} questions), k={k}")
     print(f"{'id':<6}{'recall@' + str(k):<12}{'MRR':<8}misses")
     for qid, q in questions.items():
         expected = q.get("expected", [])
@@ -112,17 +117,41 @@ def main() -> int:
             {"id": qid, "question": q["question"], "k": k, **m,
              "retrieved": [p["url"] + "#" + p.get("anchor", "") for p in pointers]}
         )
-
-    if not recalls:
-        print("no questions with expectations — nothing measured")
-        return 1
-    print(f"\naggregate over {len(recalls)} questions: "
-          f"mean recall@{k}={sum(recalls) / len(recalls):.3f}  "
-          f"mean MRR={sum(mrrs) / len(mrrs):.3f}")
-    with RESULTS.open("w") as out:
+    path = _results_path(rerank_on)
+    path.parent.mkdir(exist_ok=True)
+    with path.open("w") as out:
         for record in records:
             out.write(json.dumps(record, ensure_ascii=False) + "\n")
-    print(f"results → {RESULTS}")
+    n = len(recalls)
+    return {
+        "recall": sum(recalls) / n if n else 0.0,
+        "mrr": sum(mrrs) / n if n else 0.0,
+        "n": n,
+        "path": path,
+    }
+
+
+def main() -> int:
+    load_dotenv()
+    k = int(os.environ.get("TORCHDOCS_RETRIEVAL_K", "8"))
+    questions = load_questions()
+
+    # measure BOTH configurations every run — the reranker's contribution is the
+    # ablation the team keeps asking for, so make it a permanent side-by-side
+    # instead of a manual rerank=0 dispatch nobody can trigger from mobile.
+    on = _measure(questions, k, rerank_on=True)
+    off = _measure(questions, k, rerank_on=False)
+    if not on["n"]:
+        print("no questions with expectations — nothing measured")
+        return 1
+
+    d_recall = on["recall"] - off["recall"]
+    d_mrr = on["mrr"] - off["mrr"]
+    print(f"\n{'config':<14}{'recall@' + str(k):<12}{'MRR':<8}")
+    print(f"{'rerank ON':<14}{on['recall']:<12.3f}{on['mrr']:<8.3f}")
+    print(f"{'rerank OFF':<14}{off['recall']:<12.3f}{off['mrr']:<8.3f}")
+    print(f"{'Δ (rerank)':<14}{d_recall:<+12.3f}{d_mrr:<+8.3f}")
+    print(f"\nresults → {on['path']}  |  {off['path']}")
     return 0
 
 
