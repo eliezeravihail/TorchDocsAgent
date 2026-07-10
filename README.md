@@ -9,11 +9,24 @@ pinned: false
 short_description: Ask PyTorch anything, grounded in the docs with citations
 ---
 
+<!--
+  The block above is Hugging Face Spaces configuration, not documentation.
+  Spaces reads this repo's README.md front-matter to set up the live app
+  (sdk: gradio, app_file, title, …), so it must be the very first thing in the
+  file — nothing can precede it. GitHub has no idea it's config and just
+  renders it as a little table at the top of the page. That's the whole story;
+  the actual README starts below.
+-->
+
 # TorchDocsAgent
 
-AI-powered chat agent for PyTorch — ask questions about the library, get code examples, and explore documentation through natural language. This is a personal project and is not official PyTorch team.
+> ℹ️ **The table at the very top is not part of the README** — it's the
+> [Hugging Face Spaces](https://huggingface.co/docs/hub/spaces-config-reference)
+> config block (SDK, entrypoint, title). Spaces requires it as the file's first
+> lines, so it can't be moved or removed; GitHub just draws it as a table. The
+> real content starts here. (Details: [docs/deploy-hf-spaces.md](docs/deploy-hf-spaces.md).)
 
-> The YAML header above configures the Hugging Face Space (SDK + entrypoint); GitHub just renders it as a table. See [docs/deploy-hf-spaces.md](docs/deploy-hf-spaces.md).
+AI-powered chat agent for PyTorch — ask questions about the library, get code examples, and explore documentation through natural language. This is a personal project and is not official PyTorch team.
 
 ## Use it on Hugging Face Spaces
 
