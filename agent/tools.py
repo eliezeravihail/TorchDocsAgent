@@ -47,30 +47,28 @@ SEARCH_KINDS = frozenset({"api", "tutorial", "guide"})
 def search_docs(
     query: str, library: str | None = None, kind: str | None = None, k: int = 8
 ) -> dict:
-    """Hybrid docs search. Non-English queries are translated first.
+    """Hybrid docs search over the English-only index.
 
     `kind` lets the planner choose the content space: 'api' searches only the
     reference pages (catalog questions — "what loss functions exist?"),
     'tutorial'/'guide' only the walkthroughs. Unknown values degrade to an
     unrestricted search rather than failing the tool call.
     """
-    from agent.translate import translate_to_english
     from index.hydrate import hydrate_sections
     from index.retrieve import retrieve
 
     if kind is not None and kind not in SEARCH_KINDS:
         print(f"[search_docs] ignoring unknown kind {kind!r}", flush=True)
         kind = None
-    english = translate_to_english(query)
-    pointers = retrieve(english, k=k, library=library, kind=kind)
+    pointers = retrieve(query, k=k, library=library, kind=kind)
     sections = hydrate_sections(pointers)  # concurrent — each is a live fetch on the Space
     print(
-        f"[search_docs] {english!r} (kind={kind}) → {len(pointers)} pointers, "
+        f"[search_docs] {query!r} (kind={kind}) → {len(pointers)} pointers, "
         f"{len(sections)} hydrated",
         flush=True,
     )
     return {
-        "query": english,
+        "query": query,
         "sections": sections,
         "titles": [s.get("heading_path", "") or s["url"] for s in sections],
     }

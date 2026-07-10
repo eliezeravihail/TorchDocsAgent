@@ -26,7 +26,6 @@ def test_ask_source_keeps_discriminating_terms_past_the_first_six_words():
 def test_search_docs_shape(monkeypatch):
     import agent.tools as tools
 
-    monkeypatch.setattr("agent.translate.translate_to_english", lambda q, **k: q)
     monkeypatch.setattr(
         "index.retrieve.retrieve",
         lambda q, k=8, library=None, kind=None: [{"url": "u", "anchor": "a", "heading_path": "H"}],
@@ -67,7 +66,6 @@ def test_search_docs_passes_kind_to_retrieve(monkeypatch):
         seen["kind"] = kind
         return []
 
-    monkeypatch.setattr("agent.translate.translate_to_english", lambda q, **k: q)
     monkeypatch.setattr("index.retrieve.retrieve", fake_retrieve)
 
     tools.search_docs("what loss functions exist", kind="api")

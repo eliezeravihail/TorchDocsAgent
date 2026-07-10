@@ -20,15 +20,10 @@ def main() -> int:
     args = parser.parse_args()
 
     load_dotenv()
-    from agent.translate import translate_to_english
     from index.hydrate import hydrate_section
     from index.retrieve import retrieve
 
-    english = translate_to_english(args.query)
-    if english != args.query:
-        print(f'translated: "{args.query}" → "{english}"\n')
-
-    results = retrieve(english, k=args.k, library=args.library, debug=True)
+    results = retrieve(args.query, k=args.k, library=args.library, debug=True)
     if not results:
         print("no results — is the index built?")
         return 1
