@@ -67,6 +67,56 @@ def test_respond_streams_the_thinking_note_then_the_answer(monkeypatch):
     assert "the answer" in chunks[-1] and chunks[-1] != THINKING_NOTE
 
 
+def _cited_answer(text):
+    return Answer(
+        answer_md=text,
+        citations=[
+            Citation(
+                url="https://docs.pytorch.org/docs/stable/generated/torch.optim.SGD.html",
+                anchor="sgd",
+                title="torch.optim.SGD",
+            )
+        ],
+    )
+
+
+def test_respond_regenerates_when_the_cited_docs_drifted(monkeypatch):
+    # stale-while-revalidate: the answer ships first; when the freshness pass
+    # reports the cited page drifted, a REGENERATED answer is swapped in with
+    # the note — the last yielded value is what the user ends up seeing
+    from app.main import FRESHNESS_NOTE
+
+    calls = {"n": 0}
+
+    def routed(q, **k):
+        calls["n"] += 1
+        return _cited_answer("stale answer" if calls["n"] == 1 else "fresh answer")
+
+    monkeypatch.setattr("app.main.answer_routed", routed)
+    monkeypatch.setattr("index.freshness.refresh_pages", lambda urls: set(urls))
+    chunks = list(respond("how do I use SGD?"))
+    assert "fresh answer" in chunks[-1] and FRESHNESS_NOTE in chunks[-1]
+    assert calls["n"] == 2  # answered once, regenerated once
+
+
+def test_respond_freshness_is_silent_when_nothing_drifted(monkeypatch):
+    monkeypatch.setattr("app.main.answer_routed", lambda q, **k: _cited_answer("the answer"))
+    monkeypatch.setattr("index.freshness.refresh_pages", lambda urls: set())
+    chunks = list(respond("how do I use SGD?"))
+    assert "the answer" in chunks[-1] and "regenerated" not in chunks[-1]
+
+
+def test_respond_freshness_failure_never_disturbs_the_answer(monkeypatch):
+    monkeypatch.setattr("app.main.answer_routed", lambda q, **k: _cited_answer("the answer"))
+
+    def boom(urls):
+        raise RuntimeError("neon hiccup")
+
+    monkeypatch.setattr("index.freshness.refresh_pages", boom)
+    chunks = list(respond("how do I use SGD?"))
+    assert "the answer" in chunks[-1]  # the shown answer stands
+
+
 def test_respond_animates_the_wait_so_it_never_looks_frozen(monkeypatch):
     # a multi-second answer must show MOVING feedback, not a single frozen line:
     # between the note and the answer the generator emits animated spinner frames
