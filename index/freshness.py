@@ -4,18 +4,20 @@ Stale-while-revalidate for the docs index (the standard pattern: serve the
 stored copy instantly, revalidate right after). Answers are served straight
 from the chunks table (index/hydrate.py); AFTER an answer goes out, the pages
 it cited are re-fetched live and compared chunk-by-chunk against the stored
-content. Chunks that drifted get their `content` updated in place — so the
-index self-heals exactly where users are looking — and the caller is told
-which cited urls drifted so it can regenerate the just-shown answer from the
-fresh text.
+content. A drifted chunk is fixed COMPLETELY in place: content, content_hash,
+embedding, and tsvector — the embedding model is already hot in this process
+(it embeds every incoming query), so re-embedding a handful of chunks costs
+milliseconds and leaves the row fully consistent immediately. The caller is
+told which cited urls drifted so it can regenerate the just-shown answer.
 
-Deliberately NOT touched on drift: content_hash, embedding, tsv. The stored
-hash must keep describing the text the embedding was computed from — the
-weekly Build Index crawl then sees live-hash ≠ stored-hash and re-embeds the
-page properly. Updating the hash here would make that crawl SKIP the row and
-leave a stale embedding forever. Likewise, sections that appeared/vanished on
-the live page (restructured headings) are left to the crawl: they have no
-embedding to serve under, so an in-place content update cannot represent them.
+The re-embed reuses the page's EXISTING gloss and hypothetical questions
+(indexed_text folds them in from the committed files): they describe what the
+symbol is for, which small doc edits don't change. Structural changes — a new
+page, a deleted page, restructured sections, or drift drastic enough to need
+fresh enrichment — stay the job of the periodic Build Index crawl; sections
+that appeared/vanished on the live page are therefore skipped here. Because
+the stored hash now matches the re-embedded text, that crawl correctly skips
+the healed rows instead of re-embedding them again.
 
 A per-process TTL keeps one hot page from being re-fetched on every question,
 and everything fails open — a freshness error can never break an already-shown
@@ -60,14 +62,38 @@ def _due(url: str) -> bool:
 
 
 def _live_units(url: str) -> list[dict]:
-    """The page as it looks RIGHT NOW, chunked exactly like the index build."""
+    """The page as it looks RIGHT NOW, chunked exactly like the index build.
+
+    The page-level content_hash is computed the same way the crawl does
+    (sha256 of the markdown body — ingest/crawl.save_page), so the healed rows
+    carry the hash the next crawl will compute and be correctly skipped by it.
+    """
+    import hashlib
+
     from ingest.chunk_docs import chunk_page
     from ingest.crawl import extract_main_html, to_markdown
     from ingest.discover import fetch_html
 
     html = fetch_html(url)
     title, main = extract_main_html(html)
-    return chunk_page({"url": url, "title": title}, to_markdown(main))
+    body = to_markdown(main)
+    meta = {
+        "url": url,
+        "title": title,
+        "content_hash": hashlib.sha256(body.encode()).hexdigest(),
+    }
+    return chunk_page(meta, body)
+
+
+# the full heal: the row leaves this statement exactly as a fresh build would
+# have written it — text, hash, vector, and keyword index all describe the
+# same (new) content, so retrieval and answers agree from the next query on
+_HEAL = """
+update chunks
+set content = %s, content_hash = %s, embedding = %s,
+    tsv = to_tsvector('english', %s)
+where chunk_key = %s
+"""
 
 
 def refresh_pages(urls: list[str], conn=None) -> set[str]:
@@ -75,9 +101,11 @@ def refresh_pages(urls: list[str], conn=None) -> set[str]:
 
     For each url not checked within the TTL: fetch the live page, chunk it the
     same way the build does, and compare each chunk's content to the stored
-    row (matched by chunk_key). Drifted rows get `content` updated in place —
-    content_hash/embedding/tsv stay as they are (see module docstring). Every
-    failure is logged and skipped: freshness is best-effort by contract.
+    row (matched by chunk_key). Drifted chunks are healed in place — content,
+    content_hash, a freshly computed embedding (the model is already loaded in
+    this process), and the tsvector, with indexed_text reusing the page's
+    existing gloss/questions. Every failure is logged and skipped: freshness
+    is best-effort by contract.
     """
     changed: set[str] = set()
     due = [u for u in dict.fromkeys(urls) if u and _due(u)]
@@ -85,7 +113,7 @@ def refresh_pages(urls: list[str], conn=None) -> set[str]:
         return changed
 
     from index.db import get_pool
-    from index.embed import chunk_key
+    from index.embed import chunk_key, embed_texts, indexed_text
 
     ctx = nullcontext(conn) if conn is not None else get_pool().connection()
     try:
@@ -101,21 +129,26 @@ def refresh_pages(urls: list[str], conn=None) -> set[str]:
                         "select chunk_key, content from chunks where url = %s", (url,)
                     ).fetchall()
                 )
-                updates = [
-                    (unit["content"], key)
+                drifted = [
+                    (key, unit)
                     for unit in live
                     if (key := chunk_key(unit)) in rows and rows[key] != unit["content"]
                 ]
-                if not updates:
+                if not drifted:
                     continue
+                texts = [indexed_text(unit) for _, unit in drifted]
+                vectors = embed_texts(texts)
                 with conn.cursor() as cur:
-                    cur.executemany(
-                        "update chunks set content = %s where chunk_key = %s", updates
-                    )
+                    for (key, unit), text, vector in zip(drifted, texts, vectors, strict=True):
+                        cur.execute(
+                            _HEAL,
+                            (unit["content"], unit["content_hash"], str(vector), text, key),
+                        )
                 conn.commit()
                 changed.add(url)
                 print(
-                    f"[freshness] {url}: {len(updates)} chunk(s) drifted; content refreshed",
+                    f"[freshness] {url}: {len(drifted)} chunk(s) drifted; "
+                    "content + embedding healed in place",
                     flush=True,
                 )
     except Exception as exc:  # noqa: BLE001 — never let freshness take an answer down
