@@ -21,8 +21,11 @@ from __future__ import annotations
 import re
 from typing import Any
 
+# `content` rides along in the same query retrieval already runs, so the answer
+# path hydrates each section from it with zero extra round-trips or live fetches
 POINTER_COLUMNS = (
-    "chunk_key, url, anchor, page_title, heading_path, library, kind, source_link, part"
+    "chunk_key, url, anchor, page_title, heading_path, library, kind, source_link, "
+    "part, content"
 )
 
 DENSE_SQL = f"""

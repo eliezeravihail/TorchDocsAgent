@@ -201,15 +201,38 @@ def existing_hashes(conn) -> dict[str, str]:
 UPSERT = """
 insert into chunks (chunk_key, url, anchor, page_title, heading_path, library,
                     kind, source_link, content_hash, index_version, part,
-                    embedding, tsv)
-values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, to_tsvector('english', %s))
+                    embedding, tsv, content)
+values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, to_tsvector('english', %s), %s)
 on conflict (chunk_key) do update set
     page_title = excluded.page_title, heading_path = excluded.heading_path,
     library = excluded.library, kind = excluded.kind,
     source_link = excluded.source_link, content_hash = excluded.content_hash,
     index_version = excluded.index_version, part = excluded.part,
-    embedding = excluded.embedding, tsv = excluded.tsv
+    embedding = excluded.embedding, tsv = excluded.tsv, content = excluded.content
 """
+
+
+def _backfill_content(conn, units: list[dict]) -> None:
+    """Populate `content` for rows that predate the column (all of them on the
+    first run after it shipped). The embed loop only writes new/changed chunks,
+    so the unchanged majority need a one-time fill — a plain metadata UPDATE, no
+    re-embedding. Cheap on later runs: once content is set it is never '' again.
+    """
+    need = {
+        row[0]
+        for row in conn.execute("select chunk_key from chunks where content = ''").fetchall()
+    }
+    if not need:
+        return
+    by_key = {chunk_key(u): u["content"] for u in units}
+    params = [(by_key[k], k) for k in need if by_key.get(k)]
+    filled = 0
+    for batch in batches(params, 500):
+        with conn.cursor() as cur:
+            cur.executemany("update chunks set content = %s where chunk_key = %s", batch)
+        conn.commit()  # checkpoint: safe to kill and re-run
+        filled += len(batch)
+    print(f"[embed] backfilled content for {filled} chunks")
 
 
 def build_index(index_version: str, corpus_dir: Path = CORPUS_DIR, embed_fn=None) -> dict:
@@ -251,11 +274,16 @@ def build_index(index_version: str, corpus_dir: Path = CORPUS_DIR, embed_fn=None
                             unit.get("part", 0),
                             str(vector),
                             indexed_text(unit),
+                            unit["content"],  # raw section text, served at answer time
                         ),
                     )
             conn.commit()  # checkpoint: safe to kill and re-run from here
             done += len(batch)
             print(f"[embed] {done}/{len(todo)} embedded")
+
+        # one-time fill of `content` for chunks the embed loop didn't touch
+        # (unchanged rows from before the column shipped)
+        _backfill_content(conn, units)
 
         # purge rows whose chunk no longer exists in the snapshot (renamed
         # headings, deleted pages) — dead pointers must not win retrieval.

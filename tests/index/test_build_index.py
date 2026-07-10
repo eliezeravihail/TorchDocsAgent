@@ -6,6 +6,8 @@ pinning is the stale-chunk purge — especially that a recipe bump (which forces
 a full re-embed) still purges deleted chunks, the bug this test guards.
 """
 
+from types import SimpleNamespace
+
 import index.db as db
 import index.embed as embed
 from index.embed import EMBED_RECIPE, build_index, chunk_key
@@ -26,6 +28,8 @@ class _Result:
             conn.deleted.extend(params[0])
 
     def fetchall(self):
+        if "where content" in self.sql:  # the content-backfill probe — nothing to fill
+            return []
         return self.conn.db_rows if "select chunk_key" in self.sql else []
 
     def fetchone(self):
@@ -45,6 +49,9 @@ class _CursorCtx:
     def execute(self, sql, params=None):
         self.conn.upserts.append(params)
 
+    def executemany(self, sql, params):
+        self.conn.backfilled.extend(params)
+
 
 class FakeConn:
     def __init__(self, db_rows):
@@ -52,6 +59,7 @@ class FakeConn:
         self.count = len(db_rows)
         self.deleted: list[str] = []
         self.upserts: list = []
+        self.backfilled: list = []
 
     def __enter__(self):
         return self
@@ -98,3 +106,40 @@ def test_unchanged_chunk_not_reembedded_and_stale_purged(monkeypatch):
 
     assert conn.upserts == []  # live chunk unchanged (same hash) → nothing re-embedded
     assert "STALE_KEY" in conn.deleted
+
+
+def test_backfill_content_updates_only_rows_missing_content():
+    from index.embed import _backfill_content
+
+    units = [_unit("https://docs.pytorch.org/a.html"), _unit("https://docs.pytorch.org/b.html")]
+    empty_key = chunk_key(units[0])  # DB reports only 'a' has empty content
+
+    class Conn:
+        def __init__(self):
+            self.updates: list = []
+
+        def execute(self, sql, params=None):
+            assert "where content = ''" in sql  # only probes for un-backfilled rows
+            return SimpleNamespace(fetchall=lambda: [(empty_key,)])
+
+        def cursor(self):
+            outer = self
+
+            class Cur:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *a):
+                    return False
+
+                def executemany(self, sql, params):
+                    outer.updates.extend(params)
+
+            return Cur()
+
+        def commit(self):
+            pass
+
+    conn = Conn()
+    _backfill_content(conn, units)
+    assert conn.updates == [("body text", empty_key)]  # only the empty row, with its text
