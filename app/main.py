@@ -108,8 +108,7 @@ def _warm_up() -> None:
     """Load the embedding model once so the first question isn't slow.
 
     This also covers the guard: its topicality check embeds the (translated)
-    question with the same model. The reranker (when enabled) is warmed for
-    the same reason — its ~90MB cross-encoder must not download mid-question.
+    question with the same model.
     """
     try:
         from index.embed import embed_query
@@ -117,13 +116,6 @@ def _warm_up() -> None:
         embed_query("warmup")
     except Exception as exc:  # noqa: BLE001 — warmup is best-effort
         print(f"[app] warmup skipped: {exc}")
-    try:
-        from index import rerank
-
-        if rerank.enabled():
-            rerank.rerank("warmup", [{"url": ""}, {"url": ""}], k=1)
-    except Exception as exc:  # noqa: BLE001 — warmup is best-effort
-        print(f"[app] rerank warmup skipped: {exc}")
 
 
 def render(answer: Answer) -> str:

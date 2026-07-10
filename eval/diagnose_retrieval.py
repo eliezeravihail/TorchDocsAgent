@@ -85,7 +85,7 @@ def main() -> int:
             # The decisive number: the expected page's OWN nearest chunk — its
             # absolute cosine distance, and its true dense rank among ALL api
             # chunks (count of api chunks strictly closer). rank ~25 = a crowding
-            # problem (a deeper pool / rerank helps); a far distance / rank in the
+            # problem (a deeper pool helps); a far distance / rank in the
             # hundreds = an embedding problem (only doc-side enrichment helps).
             pat = f"%{expected}%"
             best = conn.execute(
