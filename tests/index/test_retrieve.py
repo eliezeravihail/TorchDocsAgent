@@ -56,7 +56,8 @@ def _row(key, kind="api", heading="H", url=None, dist=None):
     if url is None:
         base = "docs/stable/generated" if kind == "api" else f"{kind}s/beginner"
         url = f"https://docs.pytorch.org/{base}/{key}.html"
-    row = (key, url, "anchor", "title", heading, "core", kind, "", 0)
+    # columns match POINTER_COLUMNS: ...part, content (dense rows add trailing dist)
+    row = (key, url, "anchor", "title", heading, "core", kind, "", 0, "body")
     return row if dist is None else (*row, dist)
 
 

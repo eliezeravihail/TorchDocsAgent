@@ -60,6 +60,14 @@ def hydrate_section(pointer: dict, corpus_dir: Path = CORPUS_DIR) -> dict | None
     unrelated text under the section's citation, which breaks the grounding
     contract silently.
     """
+    # fast path: retrieve() now returns each chunk's stored `content` in the
+    # pointer, so the section is already in hand — no snapshot read, no live
+    # fetch (the per-section fetch was the dominant answer latency). Empty
+    # content (a row not yet backfilled) falls through to the fetch path below,
+    # so this is safe during the migration.
+    if pointer.get("content"):
+        return dict(pointer)
+
     loaded = _load(pointer["url"], corpus_dir)
     if loaded is None:
         return None

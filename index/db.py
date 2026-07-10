@@ -1,7 +1,10 @@
 """Neon connection and the chunks schema.
 
-Pointer-based by design: no page text column. Content lives in the
-_corpus/ snapshot; the DB holds vectors, tsvectors, and pointers.
+The DB holds vectors, tsvectors, pointers, AND each chunk's raw text
+(the `content` column) — so an answer hydrates its sections straight from the
+retrieval query with no live page fetch (that per-section fetch was the
+dominant answer latency). The _corpus/ snapshot remains the crawl-time source
+of truth; content is a served copy of it.
 
 Two ways to reach Neon, for two workloads:
 - `connect()` — one dedicated connection, for the batch index build (a single
@@ -72,8 +75,9 @@ create table if not exists chunks (
     index_version text not null,
     part          int not null default 0,  -- ordinal within a size-split section
     embedding     vector({EMBED_DIMS}) not null,
-    tsv           tsvector not null
-);
+    tsv           tsvector not null,
+    content       text not null default ''  -- raw section text, served at answer
+);                                           -- time so hydration needs no live fetch
 
 create index if not exists chunks_embedding_idx
     on chunks using hnsw (embedding vector_cosine_ops);
@@ -149,6 +153,9 @@ def set_meta(conn: psycopg.Connection, key: str, value: str) -> None:
 # and SELECT a new column before the next index build ever runs.
 RUNTIME_MIGRATIONS = [
     "alter table chunks add column if not exists part int not null default 0",
+    # content is served at answer time (no live page fetch); a constant default
+    # makes this a fast metadata-only add even on the live 22k-row table
+    "alter table chunks add column if not exists content text not null default ''",
 ]
 
 
