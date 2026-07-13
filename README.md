@@ -70,6 +70,25 @@ See [PLAN.md](PLAN.md) for the current roadmap and TODO list, and
 (one doc per code package: `agent/`, `index/`, `ingest/`, `eval/`, `app/`,
 `scripts/`).
 
+## Results (measured, not asserted)
+
+All numbers come from the project's own evaluation harness ([`eval/`](docs/eval/README.md)),
+reproducible via the `Eval` workflow. Sample sizes are stated so nothing is
+oversold — the judge set in particular is still small.
+
+| Metric | Value | How it was measured |
+|---|---|---|
+| Corpus | **18,393 chunks / 4,517 pages** | Indexed pages across `core` (3,435), `vision` (535), `tutorials` (287), `audio` (260); [`eval/index_manifest.jsonl`](eval/index_manifest.jsonl). |
+| Retrieval | **recall@8 0.79**, MRR 0.62 | Hybrid (pgvector + tsvector, RRF) over a 100-question set; [`eval/results/retrieval_v1.jsonl`](eval/results/retrieval_v1.jsonl). |
+| Answer quality | **faithfulness 0.95**, relevance 1.00, citation 0.78 (overall 0.91) | LLM-as-judge on **n=10** (v1 sample) — a relative gauge, not an absolute grade (same-family judge; see [PLAN.md](PLAN.md) M4). |
+| Latency | **p50 ≈ 6 s**, p95 51 s, max 78 s | End-to-end question→answer, n=10. The tail is free-tier LLM rate-limiting, not the retrieval pipeline. |
+
+Two honest caveats worth keeping in view: the reranker was **removed** because
+an ablation showed it didn't move retrieval (recall/MRR identical with and
+without — [`retrieval_v1_norerank.jsonl`](eval/results/retrieval_v1_norerank.jsonl)),
+and the latency tail is dominated by a single slow free-tier LLM call, which a
+timeout+failover or a paid provider would cap.
+
 ## Building the index
 
 One command crawls the docs site and embeds everything into Neon

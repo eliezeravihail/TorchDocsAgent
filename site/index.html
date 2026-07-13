@@ -194,6 +194,20 @@
   .feat p { color: var(--muted); font-size: 0.95rem; margin: 0; }
   .feat .rule { width: 26px; height: 3px; border-radius: 2px; background: var(--ember); margin-bottom: 16px; }
 
+  /* metrics — real numbers from the eval harness */
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+  @media (max-width: 860px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 460px) { .stats { grid-template-columns: 1fr; } }
+  .stat { background: var(--bg-raised); border: 1px solid var(--border); border-radius: 12px; padding: 22px 22px 24px; }
+  .stat .num {
+    font-family: var(--mono); font-size: clamp(1.8rem, 3.4vw, 2.5rem); font-weight: 700;
+    letter-spacing: -0.02em; color: var(--ember); font-variant-numeric: tabular-nums; line-height: 1;
+  }
+  .stat .lab { font-weight: 600; margin-top: 12px; font-size: 0.98rem; letter-spacing: -0.01em; }
+  .stat .cap { color: var(--muted); font-size: 0.82rem; margin-top: 5px; line-height: 1.45; }
+  .metrics-note { color: var(--faint); font-size: 0.86rem; margin-top: 22px; max-width: 46em; }
+  .metrics-note a { color: var(--muted); }
+
   /* pipeline (a real sequence) */
   .pipe { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; }
   @media (max-width: 860px) { .pipe { grid-template-columns: 1fr; } }
@@ -330,9 +344,45 @@
       <div class="eyebrow sub-eyebrow">The point</div>
       <p class="thesis" style="margin-top:16px">
         A general model will happily <span class="hl">invent an API that doesn’t exist</span>.
-        This one can’t: every answer is built only from <span class="em2">retrieved documentation</span> —
-        or it tells you it’s beyond the docs and points you to the source.
+        This one is built not to: every answer is drawn only from <span class="em2">retrieved documentation</span> —
+        or it says the question is beyond the docs and points you to the source.
       </p>
+    </div>
+  </section>
+
+  <!-- METRICS -->
+  <section class="band">
+    <div class="wrap">
+      <div class="band-head">
+        <div class="eyebrow">By the numbers</div>
+        <h2>Measured, not asserted.</h2>
+      </div>
+      <div class="stats">
+        <div class="stat">
+          <div class="num">18,393</div>
+          <div class="lab">documentation chunks</div>
+          <div class="cap">across 4,517 pages — core, torchvision, torchaudio, tutorials.</div>
+        </div>
+        <div class="stat">
+          <div class="num">0.79</div>
+          <div class="lab">recall@8</div>
+          <div class="cap">hybrid retrieval, measured on a 100-question set.</div>
+        </div>
+        <div class="stat">
+          <div class="num">0.95</div>
+          <div class="lab">faithfulness</div>
+          <div class="cap">LLM-as-judge grounding score (v1 sample, n=10).</div>
+        </div>
+        <div class="stat">
+          <div class="num">~6s</div>
+          <div class="lab">median answer</div>
+          <div class="cap">p50 end-to-end; the tail is bounded by free-tier LLM rate limits, not the pipeline.</div>
+        </div>
+      </div>
+      <p class="metrics-note">Numbers come from the project’s own evaluation harness —
+        <a href="https://github.com/eliezeravihail/TorchDocsAgent/tree/main/eval">eval/</a>:
+        retrieval scored against a labelled question set, answers graded by an LLM-as-judge on
+        faithfulness, relevance, and citation correctness. Small samples are marked as such.</p>
     </div>
   </section>
 
