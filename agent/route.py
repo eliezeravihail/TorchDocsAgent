@@ -16,13 +16,19 @@ question still gets a correct (slower) loop answer, and a grounded answer
 that ends up with NO citations escalates to the loop instead of shipping an
 unsourced reply.
 
-The routing text is the English translation (cached — the guard already paid
-for it on this very question), so the patterns stay English-only.
+The guard has already bounced non-English input, so the routing text is the
+question as received — the patterns stay English-only.
+
+`progress` (optional) is a sink for short human-readable trace lines
+("🔍 searched …", "✍️ writing the answer"); the web UI streams them in grey
+while the answer is being assembled. It defaults to None (no-op) so scripts
+and tests are unaffected.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 
 from agent.schemas import Answer
 
@@ -55,7 +61,12 @@ def needs_loop(english_question: str) -> bool:
     return bool(_LOOP_RE.search(english_question))
 
 
-def answer_routed(question: str, provider: str | None = None, client=None) -> Answer:
+def answer_routed(
+    question: str,
+    provider: str | None = None,
+    client=None,
+    progress: Callable[[str], None] | None = None,
+) -> Answer:
     """Answer via the cheapest adequate path; escalate when grounding fails.
 
     The guard (app.main / scripts.ask) has already bounced non-English input, so
@@ -64,17 +75,19 @@ def answer_routed(question: str, provider: str | None = None, client=None) -> An
     if needs_loop(question):
         from agent.loop import answer_agentic
 
-        return answer_agentic(question, provider=provider, client=client)
+        return answer_agentic(question, provider=provider, client=client, progress=progress)
 
     from agent.grounded import answer_grounded
 
-    answer = answer_grounded(question, provider=provider, client=client)
+    answer = answer_grounded(question, provider=provider, client=client, progress=progress)
     if answer.citations:
         return answer
 
     # nothing grounded a simple-looking question — the loop can reformulate
     # and search again, which one fixed pass cannot
     print("[route] grounded answer had no citations; escalating to the loop", flush=True)
+    if progress:
+        progress("↻ no sources yet — searching more thoroughly")
     from agent.loop import answer_agentic
 
-    return answer_agentic(question, provider=provider, client=client)
+    return answer_agentic(question, provider=provider, client=client, progress=progress)

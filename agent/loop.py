@@ -9,7 +9,9 @@ twin of this loop that shares the same tools, budgets, and planner.
 
 from __future__ import annotations
 
+import ast
 import json
+import re
 
 from agent.schemas import Answer, Referral
 
@@ -64,7 +66,33 @@ def _parse_action(raw: str) -> dict:
     return action
 
 
-def answer_agentic(question: str, provider: str | None = None, client=None) -> Answer:
+def _humanize(line: str) -> str:
+    """Turn a transcript step into a short grey trace line for the web UI.
+
+    The transcript entries are terse function-call records (see tools_exec.py);
+    this renders them as the model's visible reasoning. Falls back to the raw
+    line on any shape it doesn't recognise, so a format change degrades to a
+    still-useful trace rather than crashing the answer path.
+    """
+    m = re.match(r"search_docs\((.+?)\) → (\[.*\])$", line)
+    if m:
+        try:
+            query = ast.literal_eval(m.group(1))
+            titles = [str(t).split(" > ")[-1] for t in ast.literal_eval(m.group(2))]
+        except (ValueError, SyntaxError):
+            return f"🔍 {line}"
+        shown = " · ".join(t for t in titles[:4] if t)
+        return f"🔍 searched “{query}”" + (f" → {shown}" if shown else "")
+    if line.startswith("read_page"):
+        return "📖 read a full page"
+    if line.startswith("ask_source"):
+        return "🔗 checked the source-code references"
+    return f"• {line}"
+
+
+def answer_agentic(
+    question: str, provider: str | None = None, client=None, progress=None
+) -> Answer:
     """Run the tool loop and return a grounded Answer."""
     from agent.grounded import answer_from_sections
     from agent.tools_exec import do_search, execute_tool
@@ -75,10 +103,15 @@ def answer_agentic(question: str, provider: str | None = None, client=None) -> A
     seen_urls: set[str] = set()
     transcript: list[str] = []
 
+    def emit_last():  # surface the step we just recorded, in the UI's grey trace
+        if progress and transcript:
+            progress(_humanize(transcript[-1]))
+
     # always retrieve once for the raw question — never depend on a (possibly
     # rate-limited) planner call just to do the obvious first search
     budgets["search_docs"] -= 1
     do_search(question, None, sections=sections, seen_urls=seen_urls, transcript=transcript)
+    emit_last()
 
     for _ in range(MAX_STEPS):
         action = _plan(question, transcript, budgets, provider, client)
@@ -96,7 +129,10 @@ def answer_agentic(question: str, provider: str | None = None, client=None) -> A
             sections=sections, referrals=referrals,
             seen_urls=seen_urls, transcript=transcript,
         )
+        emit_last()
 
+    if progress:
+        progress("✍️ writing the answer")
     return answer_from_sections(
         question, sections, referrals=referrals, provider=provider, client=client
     )
