@@ -33,14 +33,14 @@ load_dotenv()
 
 INTRO = (
     "# 🔥 TorchDocs Agent\n"
-    "Ask anything about PyTorch — in any language. Answers are grounded in the "
+    "Ask anything about PyTorch — in English. Answers are grounded in the "
     "official documentation with clickable citations; source-code questions are "
     "referred to GitHub / DeepWiki."
 )
 
 EXAMPLES = [
     "How do I use torch.optim.SGD with momentum?",
-    "איזה סקדולרים נתמכים בטורץ'?",
+    "What LR schedulers are supported in PyTorch?",
     "How do I build a CNN to classify images, end to end?",
     "How is conv2d implemented under the hood?",
 ]
@@ -285,8 +285,16 @@ def respond(question: str, request: gr.Request = None):
 def build_ui():
     with gr.Blocks(title="TorchDocs Agent") as demo:
         gr.Markdown(INTRO)
+        # lines=1 (NOT 2) is load-bearing: Gradio only submits on a bare Enter for
+        # a SINGLE-line textbox — a multi-line box (lines>1) treats Enter as a
+        # newline and submits on Shift+Enter instead. max_lines still lets a long
+        # question grow visually; the submit rule keys off the `lines` prop, not
+        # the rendered height, so Enter keeps sending. Don't bump lines back to 2.
         question = gr.Textbox(
-            label="Your question", placeholder="How do I use a DataLoader?", lines=2
+            label="Your question",
+            placeholder="How do I use a DataLoader?",
+            lines=1,
+            max_lines=6,
         )
         ask = gr.Button("Ask", variant="primary")
         answer = gr.Markdown(label="Answer")
