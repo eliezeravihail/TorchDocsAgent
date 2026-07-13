@@ -139,6 +139,13 @@ def answer_from_sections(
     return answer
 
 
+def _section_titles(sections: list[dict], n: int = 4) -> str:
+    """A short, comma-free preview of what retrieval surfaced, for the trace."""
+    titles = [(s.get("heading_path") or s.get("url") or "").split(" > ")[-1] for s in sections]
+    shown = [t for t in titles[:n] if t]
+    return " · ".join(shown)
+
+
 def answer_grounded(
     question: str,
     k: int = 8,
@@ -146,11 +153,14 @@ def answer_grounded(
     client=None,
     retrieve_fn=None,
     hydrate_fn=None,
+    progress=None,
 ) -> Answer:
     """One retrieval pass → grounded answer with validated citations."""
     if retrieve_fn is None:
         from index.retrieve import retrieve as retrieve_fn
 
+    if progress:
+        progress("🔍 searching the documentation")
     pointers = retrieve_fn(question, k=k)
     if hydrate_fn is None:
         # default path: hydrate the k sections CONCURRENTLY — on the Space each
@@ -160,4 +170,8 @@ def answer_grounded(
         sections = hydrate_sections(pointers)
     else:  # an injected hydrate_fn (tests) stays sequential and deterministic
         sections = [s for s in (hydrate_fn(p) for p in pointers) if s]
+    if progress and sections:
+        progress(f"📄 found: {_section_titles(sections)}")
+    if progress:
+        progress("✍️ writing the answer")
     return answer_from_sections(question, sections, provider=provider, client=client)

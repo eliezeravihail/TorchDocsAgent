@@ -1,4 +1,4 @@
-from agent.loop import _parse_action, answer_agentic
+from agent.loop import _humanize, _parse_action, answer_agentic
 from agent.schemas import Answer
 
 
@@ -6,6 +6,39 @@ def test_parse_action_extracts_json_from_noise():
     assert _parse_action('sure! {"action":"search_docs","query":"sgd"} ')["query"] == "sgd"
     assert _parse_action("no json here")["action"] == "answer"
     assert _parse_action('{"action":"bogus"}')["action"] == "answer"
+
+
+def test_humanize_renders_each_step_and_falls_back():
+    # a search step → query + the last segment of each heading path, capped at 4
+    line = "search_docs('sgd momentum') → ['torch.optim > SGD', 'SGD > Per-parameter options']"
+    out = _humanize(line)
+    assert "🔍" in out and "sgd momentum" in out
+    assert "SGD" in out and "Per-parameter options" in out
+    assert "torch.optim >" not in out  # only the leaf heading is shown
+    assert _humanize("read_page(http://x) → full page added").startswith("📖")
+    assert _humanize("ask_source → 2 referral links").startswith("🔗")
+    # an unrecognised shape degrades to the raw line, never crashes
+    assert "weird step" in _humanize("weird step")
+
+
+def test_loop_streams_a_progress_trace(monkeypatch):
+    scripted = ScriptedAgent(
+        ['{"action":"search_docs","query":"dataloader"}', '{"action":"answer"}'], None
+    )
+    monkeypatch.setattr("agent.llm._raw_completion", scripted.plan)
+    monkeypatch.setattr(
+        "agent.tools.search_docs",
+        lambda q, library=None, kind=None, k=8: {"query": q, "sections": [], "titles": ["H"]},
+    )
+    monkeypatch.setattr(
+        "agent.grounded.answer_from_sections",
+        lambda q, s, referrals=None, provider=None, client=None: Answer(answer_md="ok"),
+    )
+    seen: list[str] = []
+    answer_agentic("how do I load data?", progress=seen.append)
+    # seed search + planner search are both surfaced, and the final writing step
+    assert sum(1 for line in seen if line.startswith("🔍")) == 2
+    assert seen[-1].startswith("✍️")
 
 
 class ScriptedAgent:

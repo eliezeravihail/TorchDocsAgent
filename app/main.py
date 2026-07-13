@@ -17,6 +17,7 @@ Deploy:       Hugging Face Spaces (this file is the Space entrypoint).
 
 from __future__ import annotations
 
+import html
 import itertools
 import os
 import threading
@@ -33,14 +34,14 @@ load_dotenv()
 
 INTRO = (
     "# 🔥 TorchDocs Agent\n"
-    "Ask anything about PyTorch — in any language. Answers are grounded in the "
+    "Ask anything about PyTorch — in English. Answers are grounded in the "
     "official documentation with clickable citations; source-code questions are "
     "referred to GitHub / DeepWiki."
 )
 
 EXAMPLES = [
     "How do I use torch.optim.SGD with momentum?",
-    "איזה סקדולרים נתמכים בטורץ'?",
+    "What LR schedulers are supported in PyTorch?",
     "How do I build a CNN to classify images, end to end?",
     "How is conv2d implemented under the hood?",
 ]
@@ -69,16 +70,18 @@ BUSY_NOTE = "You're asking faster than I can answer — give it a moment and try
 # Shown the instant a question is submitted, then replaced by the answer. The
 # heavy path (guard embed → retrieval → LLM) takes a few seconds, so immediate
 # feedback is the difference between "is it broken?" and "it's working".
-THINKING_NOTE = "🔎 Searching the PyTorch docs and drafting an answer…"
-# The answer is now a fast retrieval + a ~5-8s LLM call (hydration used to be
-# the long pole; it is served from the DB now). We cannot cheaply stream the
-# tokens — the answer is a validated JSON object, not free prose — so instead
-# the wait is ANIMATED: a spinner that ticks every THINKING_TICK seconds and a
-# stage label, so a multi-second wait reads as "working", never "frozen".
+THINKING_NOTE = "🔎 Searching the PyTorch docs…"
+# We can't cheaply stream answer TOKENS — the answer is a validated JSON object
+# assembled over several tool calls, not free prose. So instead we stream the
+# REASONING: the pipeline emits a short trace line per step (which docs it
+# searched, what it found, when it starts writing) and respond() renders those
+# in grey with a turning wheel, then replaces them with the answer in normal
+# (black) text. A multi-second wait then reads as visible work, not a freeze.
 THINKING_SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 THINKING_TICK = 0.6  # seconds between animation frames
-# retrieval+hydration is sub-second now, so after this the time is all LLM
-_DRAFTING_AFTER = 1.5
+# grey trace lines take the theme's subdued colour (adapts to light/dark); the
+# inline style survives Gradio's markdown sanitiser (verified on gradio 6.20)
+TRACE_STYLE = "color:var(--body-text-color-subdued)"
 # Keep the phrase "went wrong" — the post-deploy smoke test treats it as the
 # failure marker (scripts/smoke_space.py). The real exception goes to the logs;
 # the user never sees hosts, model slugs, or config internals.
@@ -144,12 +147,20 @@ def render(answer: Answer) -> str:
     return "\n".join(parts)
 
 
-def _pipeline(question: str, request: gr.Request = None, out: dict | None = None) -> str:
+def _pipeline(
+    question: str,
+    request: gr.Request = None,
+    out: dict | None = None,
+    progress=None,
+) -> str:
     """The full answer pipeline → final markdown string (no UI concerns).
 
     `out` (optional) receives the Answer object under "answer" when one was
     generated — respond()'s freshness pass needs the citations, and returning a
     tuple would break every caller that treats the result as markdown.
+
+    `progress` (optional) is a sink for short trace lines the pipeline emits as
+    it retrieves and reasons; respond() streams them to the UI in grey.
     """
     question = (question or "").strip()
     if not question:
@@ -167,7 +178,7 @@ def _pipeline(question: str, request: gr.Request = None, out: dict | None = None
         # routed: simple questions take the 1-2-call grounded path (seconds),
         # multi-source shapes get the full tool loop (see agent/route.py)
         started = time.monotonic()
-        answer = answer_routed(question)
+        answer = answer_routed(question, progress=progress)
         # question→answer latency is the core UX metric — log it per request so
         # the Space logs show real p50/p95, not just the eval's sampled number
         print(f"[app] answered in {time.monotonic() - started:.1f}s", flush=True)
@@ -179,6 +190,21 @@ def _pipeline(question: str, request: gr.Request = None, out: dict | None = None
         # an exception string can leak hosts, model slugs, and config internals
         print(f"[app] answer failed: {type(exc).__name__}: {exc}", flush=True)
         return ERROR_NOTE
+
+
+def _render_trace(lines: list[str], spinner: str | None) -> str:
+    """The live reasoning trace as one grey markdown block.
+
+    Each step on its own line, escaped (a step echoes the user's query, which is
+    untrusted). While work continues, `spinner` is a turning wheel on a trailing
+    line; pass None to drop it. Empty trace + spinner → just the wheel.
+    """
+    rows = [html.escape(line) for line in lines]
+    if spinner is not None:
+        rows.append(spinner)
+    if not rows:
+        rows = ["…"]
+    return f'<span style="{TRACE_STYLE}">{"<br>".join(rows)}</span>'
 
 
 def respond(question: str, request: gr.Request = None):
@@ -206,10 +232,16 @@ def respond(question: str, request: gr.Request = None):
     yield THINKING_NOTE
 
     result: dict = {}
+    trace: list[str] = []
+    trace_lock = threading.Lock()  # the worker appends; this generator reads
+
+    def progress(line: str) -> None:
+        with trace_lock:
+            trace.append(line)
 
     def work():
         try:
-            result["md"] = _pipeline(question, request, out=result)
+            result["md"] = _pipeline(question, request, out=result, progress=progress)
         except Exception as exc:  # noqa: BLE001 — the UI must never hang on a crash
             print(f"[app] pipeline thread failed: {type(exc).__name__}: {exc}", flush=True)
             result["md"] = ERROR_NOTE
@@ -217,17 +249,13 @@ def respond(question: str, request: gr.Request = None):
     worker = threading.Thread(target=work, daemon=True)
     worker.start()
     frames = itertools.cycle(THINKING_SPINNER)
-    started = time.monotonic()
-    while True:
+    while worker.is_alive():
         worker.join(timeout=THINKING_TICK)  # wait a tick (or finish sooner)
-        if not worker.is_alive():
-            break
-        stage = "Searching the PyTorch docs" if (
-            time.monotonic() - started < _DRAFTING_AFTER
-        ) else "Drafting your answer"
-        yield f"{next(frames)} {stage}…"
+        with trace_lock:
+            lines = list(trace)
+        yield _render_trace(lines, next(frames))  # grey trace + turning wheel
     md = result.get("md", ERROR_NOTE)
-    yield md
+    yield md  # the answer, in normal (black) text, replaces the grey trace
 
     # ---- stale-while-revalidate: the answer is already on screen ----------
     answer = result.get("answer")
@@ -285,8 +313,16 @@ def respond(question: str, request: gr.Request = None):
 def build_ui():
     with gr.Blocks(title="TorchDocs Agent") as demo:
         gr.Markdown(INTRO)
+        # lines=1 (NOT 2) is load-bearing: Gradio only submits on a bare Enter for
+        # a SINGLE-line textbox — a multi-line box (lines>1) treats Enter as a
+        # newline and submits on Shift+Enter instead. max_lines still lets a long
+        # question grow visually; the submit rule keys off the `lines` prop, not
+        # the rendered height, so Enter keeps sending. Don't bump lines back to 2.
         question = gr.Textbox(
-            label="Your question", placeholder="How do I use a DataLoader?", lines=2
+            label="Your question",
+            placeholder="How do I use a DataLoader?",
+            lines=1,
+            max_lines=6,
         )
         ask = gr.Button("Ask", variant="primary")
         answer = gr.Markdown(label="Answer")
