@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TorchDocs Agent — grounded PyTorch answers</title>
+<style>
+  :root {
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
+
+    /* warm, ember-biased neutrals — the greys are literally the reasoning-trace colour */
+    --bg: #17120E;
+    --bg-raised: #211a14;
+    --bg-inset: #100c09;
+    --text: #F3EDE6;
+    --muted: #A99C8D;      /* the grey a trace line is drawn in */
+    --faint: #6E6255;
+    --border: rgba(243, 237, 230, 0.11);
+    --border-strong: rgba(243, 237, 230, 0.2);
+    --ember: #FF5A36;
+    --ember-2: #FF8A5B;
+    --verified: #64C296;   /* semantic: grounded/cited — NOT the accent */
+    --shadow: 0 24px 60px -30px rgba(0,0,0,0.75);
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #FAF8F5;
+      --bg-raised: #FFFFFF;
+      --bg-inset: #F1EBE4;
+      --text: #211B16;
+      --muted: #6E6357;
+      --faint: #9B9184;
+      --border: rgba(34, 27, 22, 0.12);
+      --border-strong: rgba(34, 27, 22, 0.22);
+      --ember: #E5431F;
+      --ember-2: #FF6A3D;
+      --verified: #2E9367;
+      --shadow: 0 24px 60px -34px rgba(60, 30, 12, 0.28);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #17120E; --bg-raised: #211a14; --bg-inset: #100c09;
+    --text: #F3EDE6; --muted: #A99C8D; --faint: #6E6255;
+    --border: rgba(243,237,230,0.11); --border-strong: rgba(243,237,230,0.2);
+    --ember: #FF5A36; --ember-2: #FF8A5B; --verified: #64C296;
+    --shadow: 0 24px 60px -30px rgba(0,0,0,0.75);
+  }
+  :root[data-theme="light"] {
+    --bg: #FAF8F5; --bg-raised: #FFFFFF; --bg-inset: #F1EBE4;
+    --text: #211B16; --muted: #6E6357; --faint: #9B9184;
+    --border: rgba(34,27,22,0.12); --border-strong: rgba(34,27,22,0.22);
+    --ember: #E5431F; --ember-2: #FF6A3D; --verified: #2E9367;
+    --shadow: 0 24px 60px -34px rgba(60,30,12,0.28);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--sans); line-height: 1.6;
+    -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+  }
+  .wrap { width: 100%; max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+  a { color: inherit; }
+  h1, h2, h3 { text-wrap: balance; margin: 0; }
+
+  .eyebrow {
+    font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.16em;
+    text-transform: uppercase; color: var(--ember); font-weight: 600;
+  }
+  .sub-eyebrow { color: var(--faint); }
+
+  /* ---- top bar ---- */
+  header.bar {
+    position: sticky; top: 0; z-index: 20;
+    backdrop-filter: blur(12px);
+    background: color-mix(in srgb, var(--bg) 82%, transparent);
+    border-bottom: 1px solid var(--border);
+  }
+  .bar-inner { display: flex; align-items: center; gap: 24px; height: 62px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: -0.01em; }
+  .flame {
+    width: 22px; height: 22px; flex: none;
+    filter: drop-shadow(0 0 10px color-mix(in srgb, var(--ember) 55%, transparent));
+  }
+  nav.links { display: flex; gap: 22px; margin-left: auto; align-items: center; }
+  nav.links a {
+    text-decoration: none; color: var(--muted); font-size: 0.92rem;
+    font-weight: 500; transition: color .15s;
+  }
+  nav.links a:hover { color: var(--text); }
+  .nav-hide { }
+  @media (max-width: 760px) { .nav-hide { display: none; } nav.links { gap: 14px; } }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--sans); font-weight: 600; font-size: 0.92rem;
+    text-decoration: none; border-radius: 8px; padding: 9px 15px;
+    border: 1px solid transparent; cursor: pointer; transition: transform .12s, box-shadow .2s, background .2s;
+  }
+  .btn-primary {
+    color: #fff; background: linear-gradient(135deg, var(--ember), var(--ember-2));
+    box-shadow: 0 8px 22px -10px color-mix(in srgb, var(--ember) 70%, transparent);
+  }
+  .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 12px 26px -10px color-mix(in srgb, var(--ember) 75%, transparent); }
+  .btn-ghost { color: var(--text); border-color: var(--border-strong); background: transparent; }
+  .btn-ghost:hover { border-color: var(--ember); color: var(--ember); }
+
+  .toggle {
+    width: 34px; height: 34px; border-radius: 8px; border: 1px solid var(--border-strong);
+    background: transparent; color: var(--muted); cursor: pointer; display: grid; place-items: center;
+    flex: none; transition: color .15s, border-color .15s;
+  }
+  .toggle:hover { color: var(--ember); border-color: var(--ember); }
+
+  /* ---- hero ---- */
+  .hero { padding: 74px 0 40px; }
+  .hero-grid { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 54px; align-items: center; }
+  @media (max-width: 900px) { .hero-grid { grid-template-columns: 1fr; gap: 40px; } .hero { padding: 46px 0 20px; } }
+  h1.head {
+    font-size: clamp(2.3rem, 5.2vw, 3.9rem); line-height: 1.05; letter-spacing: -0.03em;
+    font-weight: 800; margin: 18px 0 0;
+  }
+  h1.head .flame-word { color: var(--ember); }
+  .lede { color: var(--muted); font-size: clamp(1.02rem, 1.6vw, 1.2rem); margin: 20px 0 0; max-width: 34em; }
+  .cta-row { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; }
+  .cta-row .btn { padding: 12px 20px; font-size: 1rem; }
+  .disclaimer { margin-top: 20px; font-size: 0.82rem; color: var(--faint); }
+
+  /* ---- the live answer card (the thesis) ---- */
+  .card {
+    background: var(--bg-inset); border: 1px solid var(--border-strong);
+    border-radius: 14px; box-shadow: var(--shadow); overflow: hidden;
+  }
+  .card-top {
+    display: flex; align-items: center; gap: 8px; padding: 12px 16px;
+    border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--bg-raised) 60%, transparent);
+  }
+  .dot { width: 11px; height: 11px; border-radius: 50%; background: var(--border-strong); }
+  .card-title { margin-left: 8px; font-family: var(--mono); font-size: 0.76rem; color: var(--faint); letter-spacing: 0.02em; }
+  .card-body { padding: 20px 20px 22px; min-height: 292px; }
+  .ask { font-family: var(--mono); font-size: 0.86rem; color: var(--text); margin-bottom: 16px; }
+  .ask .q { color: var(--ember); }
+  .trace { font-family: var(--mono); font-size: 0.83rem; color: var(--muted); line-height: 1.85; }
+  .trace .row { opacity: 0; transform: translateY(3px); transition: opacity .35s, transform .35s; }
+  .trace .row.show { opacity: 1; transform: none; }
+  .answer {
+    margin-top: 16px; opacity: 0; transition: opacity .5s; font-size: 0.95rem; line-height: 1.6;
+  }
+  .answer.show { opacity: 1; }
+  .answer code, .code {
+    font-family: var(--mono); background: color-mix(in srgb, var(--ember) 12%, transparent);
+    color: var(--ember); padding: 1px 5px; border-radius: 4px; font-size: 0.86em;
+  }
+  .snippet {
+    margin: 12px 0 4px; padding: 11px 13px; border-radius: 8px; background: var(--bg);
+    border: 1px solid var(--border); font-family: var(--mono); font-size: 0.8rem;
+    color: var(--text); overflow-x: auto; line-height: 1.5;
+  }
+  .snippet .kw { color: var(--ember); }
+  .snippet .cm { color: var(--faint); }
+  .cite {
+    display: inline-flex; align-items: center; gap: 6px; margin-top: 14px;
+    font-family: var(--mono); font-size: 0.75rem; color: var(--verified);
+    border: 1px solid color-mix(in srgb, var(--verified) 40%, transparent);
+    border-radius: 999px; padding: 4px 11px; text-decoration: none;
+  }
+  .cite:hover { background: color-mix(in srgb, var(--verified) 12%, transparent); }
+  .caret { display: inline-block; width: 8px; height: 1.05em; vertical-align: -0.16em;
+    background: var(--ember); margin-left: 2px; animation: blink 1.05s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* ---- generic section ---- */
+  section.band { padding: 64px 0; border-top: 1px solid var(--border); }
+  .band-head { max-width: 40em; margin-bottom: 40px; }
+  .band-head h2 { font-size: clamp(1.7rem, 3vw, 2.3rem); letter-spacing: -0.02em; font-weight: 800; margin-top: 12px; }
+  .band-head p { color: var(--muted); font-size: 1.06rem; margin: 14px 0 0; }
+
+  /* thesis strip */
+  .thesis { font-size: clamp(1.3rem, 2.6vw, 1.9rem); font-weight: 600; letter-spacing: -0.02em; line-height: 1.4; max-width: 20em; }
+  .thesis .hl { color: var(--ember); }
+  .thesis .em2 { color: var(--verified); }
+
+  /* feature grid */
+  .features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  @media (max-width: 860px) { .features { grid-template-columns: 1fr; } }
+  .feat {
+    background: var(--bg-raised); border: 1px solid var(--border); border-radius: 12px;
+    padding: 22px 22px 24px; transition: border-color .2s, transform .2s;
+  }
+  .feat:hover { border-color: var(--border-strong); transform: translateY(-2px); }
+  .feat .tag { font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); }
+  .feat h3 { font-size: 1.12rem; margin: 12px 0 8px; letter-spacing: -0.01em; }
+  .feat p { color: var(--muted); font-size: 0.95rem; margin: 0; }
+  .feat .rule { width: 26px; height: 3px; border-radius: 2px; background: var(--ember); margin-bottom: 16px; }
+
+  /* pipeline (a real sequence) */
+  .pipe { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; }
+  @media (max-width: 860px) { .pipe { grid-template-columns: 1fr; } }
+  .step { position: relative; padding: 24px 22px; border: 1px solid var(--border); background: var(--bg-raised); }
+  .pipe .step:not(:last-child) { border-right: none; }
+  @media (max-width: 860px) { .pipe .step:not(:last-child) { border-right: 1px solid var(--border); border-bottom: none; } }
+  .step:first-child { border-radius: 12px 0 0 12px; }
+  .step:last-child { border-radius: 0 12px 12px 0; }
+  @media (max-width: 860px) {
+    .step:first-child { border-radius: 12px 12px 0 0; }
+    .step:last-child { border-radius: 0 0 12px 12px; }
+  }
+  .step .n { font-family: var(--mono); font-size: 0.78rem; color: var(--ember); font-weight: 600; }
+  .step h3 { font-family: var(--mono); font-size: 0.98rem; margin: 10px 0 8px; letter-spacing: 0.01em; }
+  .step p { color: var(--muted); font-size: 0.88rem; margin: 0; }
+  .step .arrow { position: absolute; right: -9px; top: 50%; transform: translateY(-50%); z-index: 2;
+    width: 18px; height: 18px; color: var(--ember); }
+  @media (max-width: 860px) { .step .arrow { display: none; } }
+
+  /* use it — two tracks */
+  .tracks { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; align-items: start; }
+  @media (max-width: 860px) { .tracks { grid-template-columns: 1fr; } }
+  .track { background: var(--bg-raised); border: 1px solid var(--border); border-radius: 12px; padding: 26px; }
+  .track h3 { font-size: 1.18rem; letter-spacing: -0.01em; }
+  .track .kicker { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ember); }
+  .track ol { margin: 16px 0 0; padding-left: 20px; color: var(--muted); }
+  .track ol li { margin-bottom: 9px; }
+  .track ol li::marker { color: var(--faint); font-family: var(--mono); font-size: 0.85em; }
+  pre.block {
+    margin: 16px 0 0; padding: 16px; border-radius: 10px; background: var(--bg-inset);
+    border: 1px solid var(--border); overflow-x: auto;
+    font-family: var(--mono); font-size: 0.82rem; line-height: 1.7; color: var(--text);
+  }
+  pre.block .cm { color: var(--faint); }
+  pre.block .kw { color: var(--ember); }
+  .ex { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  .ex span {
+    font-family: var(--mono); font-size: 0.78rem; color: var(--muted);
+    border: 1px solid var(--border); border-radius: 999px; padding: 5px 11px; background: var(--bg);
+  }
+
+  /* docs links */
+  .doclist { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  @media (max-width: 860px) { .doclist { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 520px) { .doclist { grid-template-columns: 1fr; } }
+  .doc {
+    display: block; text-decoration: none; padding: 16px 18px; border-radius: 10px;
+    border: 1px solid var(--border); background: var(--bg-raised); transition: border-color .2s, transform .2s;
+  }
+  .doc:hover { border-color: var(--ember); transform: translateY(-2px); }
+  .doc .p { font-family: var(--mono); color: var(--ember); font-size: 0.9rem; }
+  .doc .d { color: var(--muted); font-size: 0.86rem; margin-top: 5px; }
+
+  /* footer */
+  footer { border-top: 1px solid var(--border); padding: 40px 0 56px; margin-top: 8px; }
+  .foot { display: flex; flex-wrap: wrap; gap: 18px 30px; align-items: center; color: var(--muted); font-size: 0.9rem; }
+  .foot a { color: var(--muted); text-decoration: none; }
+  .foot a:hover { color: var(--ember); }
+  .foot .sep { flex: 1; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .trace .row, .answer { opacity: 1 !important; transform: none !important; transition: none !important; }
+    .caret { animation: none; }
+    .btn, .feat, .doc { transition: none; }
+  }
+</style>
+</head>
+<body>
+
+
+<header class="bar">
+  <div class="wrap bar-inner">
+    <span class="brand">
+      <svg class="flame" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" style="color:var(--ember)" d="M13.5 1.5c.4 3-1.2 4.7-2.8 6.3C9 9.6 7.2 11.3 7.2 14.2a4.8 4.8 0 0 0 9.6.3c0-1.6-.7-2.9-1.4-4-.3 1-1 1.6-1.8 1.7.8-2.3.3-5.3-2-8.4l1.9-2.3ZM10 15.4c0-1.3.8-2.2 1.6-3 .3 1 .1 2 .9 2.9.5-.3.8-.8.9-1.4.5.7.9 1.5.9 2.4a2.6 2.6 0 0 1-5.2 0c0-.5.1-.9.3-1.3.1.6.3 1 .6 1.3-.1-.9-.4-1.6 0-2.3-.1.7 0 1.1 0 1.4Z"/></svg>
+      TorchDocs Agent
+    </span>
+    <nav class="links">
+      <a class="nav-hide" href="#what">What</a>
+      <a class="nav-hide" href="#how">How it works</a>
+      <a class="nav-hide" href="#use">Use it</a>
+      <a href="https://github.com/eliezeravihail/TorchDocsAgent/tree/main/docs">Docs</a>
+      <button class="toggle" id="themeBtn" aria-label="Toggle colour theme" title="Toggle theme">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5 19 19M19 5l-1.5 1.5M6.5 17.5 5 19"/></svg>
+      </button>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <!-- HERO -->
+  <section class="hero">
+    <div class="wrap hero-grid">
+      <div>
+        <div class="eyebrow">PyTorch docs · grounded RAG agent</div>
+        <h1 class="head">Ask PyTorch anything.<br>Get an answer <span class="flame-word">grounded in the docs</span>.</h1>
+        <p class="lede">A chat agent that answers from the official PyTorch documentation — every claim traced to the exact page it cites, and an honest referral when the question reaches past the docs. No invented APIs.</p>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="https://huggingface.co/spaces/eliezeravihail/torchdocs-agent">
+            Try it live
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </a>
+          <a class="btn btn-ghost" href="#how">See how it works</a>
+        </div>
+        <p class="disclaimer">A personal project — not affiliated with or endorsed by the PyTorch team.</p>
+      </div>
+
+      <!-- the live answer card: the product's signature UX -->
+      <div class="card" id="demo" aria-label="Example of the agent answering, with its reasoning shown">
+        <div class="card-top">
+          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+          <span class="card-title">torchdocs-agent</span>
+        </div>
+        <div class="card-body">
+          <div class="ask">&gt; <span class="q">How do I use SGD with momentum?</span></div>
+          <div class="trace" id="trace">
+            <div class="row" data-row>🔍 searched “SGD momentum”</div>
+            <div class="row" data-row>📄 found: torch.optim.SGD · Per-parameter options</div>
+            <div class="row" data-row>✍️ writing the answer</div>
+          </div>
+          <div class="answer" id="answer">
+            Pass <code>momentum</code> to <code>torch.optim.SGD</code> — a value around <code>0.9</code> is typical:
+            <div class="snippet"><span class="kw">optimizer</span> = torch.optim.SGD(model.parameters(),
+      lr=<span class="kw">0.01</span>, momentum=<span class="kw">0.9</span>)  <span class="cm"># accelerates in consistent directions</span></div>
+            <a class="cite" href="https://docs.pytorch.org/docs/stable/generated/torch.optim.SGD.html">✓ torch.optim.SGD ↗</a><span class="caret" id="caret"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- THESIS -->
+  <section class="band" id="what">
+    <div class="wrap">
+      <div class="eyebrow sub-eyebrow">The point</div>
+      <p class="thesis" style="margin-top:16px">
+        A general model will happily <span class="hl">invent an API that doesn’t exist</span>.
+        This one can’t: every answer is built only from <span class="em2">retrieved documentation</span> —
+        or it tells you it’s beyond the docs and points you to the source.
+      </p>
+    </div>
+  </section>
+
+  <!-- FEATURES -->
+  <section class="band">
+    <div class="wrap">
+      <div class="band-head">
+        <div class="eyebrow">What makes it different</div>
+        <h2>Grounded, current, and honest about its limits.</h2>
+      </div>
+      <div class="features">
+        <div class="feat">
+          <div class="rule"></div>
+          <div class="tag">Citations</div>
+          <h3>Grounded, or it refers you out</h3>
+          <p>Every claim traces to a retrieved doc section; citations open the exact page and anchor. Source-code internals get a DeepWiki / GitHub referral — never a guess dressed as fact.</p>
+        </div>
+        <div class="feat">
+          <div class="rule"></div>
+          <div class="tag">Freshness</div>
+          <h3>The index heals itself</h3>
+          <p>After answering, it revalidates the cited pages against the live docs. If they drifted, it re-embeds the changed sections in place and corrects the answer — no rebuild, no stale cache.</p>
+        </div>
+        <div class="feat">
+          <div class="rule"></div>
+          <div class="tag">Transparency</div>
+          <h3>You watch it think</h3>
+          <p>The reasoning streams live in grey — what it searched, what it found — then resolves into the answer in black. Honest progress for a payload that can only arrive whole.</p>
+        </div>
+        <div class="feat">
+          <div class="rule"></div>
+          <div class="tag">Retrieval</div>
+          <h3>Hybrid search, lean stack</h3>
+          <p>Dense pgvector + keyword tsvector, RRF-merged over Neon Postgres. Embeddings run on a local 384-dim model on CPU: no embedding API, no quota, no cost.</p>
+        </div>
+        <div class="feat">
+          <div class="rule"></div>
+          <div class="tag">Resilience</div>
+          <h3>Won’t fall over</h3>
+          <p>A provider fallback chain — OpenRouter → Gemini → Anthropic — with per-model cooldowns. One rate-limited or broken key self-heals to the next instead of taking the app down.</p>
+        </div>
+        <div class="feat">
+          <div class="rule"></div>
+          <div class="tag">Discipline</div>
+          <h3>Checked before it ships</h3>
+          <p>Every snippet is statically checked — it must parse, import only torch/stdlib, and mention only symbols that exist in the index. A failed check triggers one regeneration, not a bluff.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- HOW IT WORKS -->
+  <section class="band" id="how">
+    <div class="wrap">
+      <div class="band-head">
+        <div class="eyebrow">The pipeline</div>
+        <h2>From the docs site to a cited answer, in four stages.</h2>
+        <p>Data flows one way. Each stage is a package in the repo, documented on its own.</p>
+      </div>
+      <div class="pipe">
+        <div class="step">
+          <div class="n">01</div>
+          <h3>ingest</h3>
+          <p>Discover every page (Sphinx <span class="code">objects.inv</span> + sitemaps), crawl it, and heading-chunk the docs site into an on-disk snapshot.</p>
+          <svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </div>
+        <div class="step">
+          <div class="n">02</div>
+          <h3>index</h3>
+          <p>Embed into Neon (pgvector + tsvector). Hybrid retrieval returns pointers; content is hydrated straight from the database.</p>
+          <svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </div>
+        <div class="step">
+          <div class="n">03</div>
+          <h3>agent</h3>
+          <p>Guard → route → a single grounded pass or a tool loop (<span class="code">search_docs</span> / <span class="code">read_page</span> / <span class="code">ask_source</span>) → a validated answer.</p>
+          <svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </div>
+        <div class="step">
+          <div class="n">04</div>
+          <h3>app</h3>
+          <p>A Gradio Space streams the reasoning trace and renders the answer with clickable citations — then quietly checks the docs are still current.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- USE IT -->
+  <section class="band" id="use">
+    <div class="wrap">
+      <div class="band-head">
+        <div class="eyebrow">Use it</div>
+        <h2>Two ways in.</h2>
+      </div>
+      <div class="tracks">
+        <div class="track">
+          <div class="kicker">No install</div>
+          <h3>Ask the live agent</h3>
+          <ol>
+            <li>Open the Space — it runs as a public web app.</li>
+            <li>Type a question <strong>in English</strong> and press Enter.</li>
+            <li>Read the answer; click a citation to land on the exact doc section.</li>
+          </ol>
+          <div class="ex">
+            <span>How do I use torch.optim.SGD with momentum?</span>
+            <span>What LR schedulers are supported?</span>
+            <span>How do I build a CNN to classify images?</span>
+          </div>
+          <div class="cta-row" style="margin-top:22px">
+            <a class="btn btn-primary" href="https://huggingface.co/spaces/eliezeravihail/torchdocs-agent">Open the Space
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+            </a>
+          </div>
+        </div>
+        <div class="track">
+          <div class="kicker">Self-host</div>
+          <h3>Run or deploy your own</h3>
+          <p style="color:var(--muted); margin:14px 0 0; font-size:0.95rem;">Embeddings run locally on CPU, so building the index needs only a Neon connection string.</p>
+          <pre class="block"><span class="cm"># 1 · install</span>
+git clone https://github.com/eliezeravihail/TorchDocsAgent
+<span class="kw">cd</span> TorchDocsAgent && pip install -e .
+
+<span class="cm"># 2 · build the index (crawl + embed, CPU, minutes)</span>
+<span class="kw">export</span> NEON_URL=postgres://...
+python scripts/build_index.py
+
+<span class="cm"># 3 · run locally — or deploy to HF Spaces</span>
+python -m app.main</pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ENGINEERING DOCS -->
+  <section class="band">
+    <div class="wrap">
+      <div class="band-head">
+        <div class="eyebrow">Built in the open</div>
+        <h2>Read the reasoning, not just the code.</h2>
+        <p>Every package is documented with its boundary, its logic, the design decisions behind it, and the tools it chose — and why.</p>
+      </div>
+      <div class="doclist">
+        <a class="doc" href="https://github.com/eliezeravihail/TorchDocsAgent/tree/main/docs/agent"><div class="p">agent/</div><div class="d">Guard, router, grounded &amp; loop paths, LLM dispatch.</div></a>
+        <a class="doc" href="https://github.com/eliezeravihail/TorchDocsAgent/tree/main/docs/index"><div class="p">index/</div><div class="d">Neon/pgvector storage, hybrid retrieval, freshness.</div></a>
+        <a class="doc" href="https://github.com/eliezeravihail/TorchDocsAgent/tree/main/docs/ingest"><div class="p">ingest/</div><div class="d">Discover → crawl → chunk the docs into a snapshot.</div></a>
+        <a class="doc" href="https://github.com/eliezeravihail/TorchDocsAgent/tree/main/docs/eval"><div class="p">eval/</div><div class="d">Static checks, retrieval metrics, LLM-as-judge.</div></a>
+        <a class="doc" href="https://github.com/eliezeravihail/TorchDocsAgent/tree/main/docs/app"><div class="p">app/</div><div class="d">The Gradio Space: serving + the live trace.</div></a>
+        <a class="doc" href="https://github.com/eliezeravihail/TorchDocsAgent/blob/main/docs/design-content-and-agent-flow.md"><div class="p">design ↗</div><div class="d">The architecture bible — corpus, tools, flow.</div></a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap foot">
+    <span class="brand"><svg class="flame" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" style="color:var(--ember)" d="M13.5 1.5c.4 3-1.2 4.7-2.8 6.3C9 9.6 7.2 11.3 7.2 14.2a4.8 4.8 0 0 0 9.6.3c0-1.6-.7-2.9-1.4-4-.3 1-1 1.6-1.8 1.7.8-2.3.3-5.3-2-8.4l1.9-2.3Z"/></svg> TorchDocs Agent</span>
+    <span class="sep"></span>
+    <a href="https://github.com/eliezeravihail/TorchDocsAgent">GitHub</a>
+    <a href="https://huggingface.co/spaces/eliezeravihail/torchdocs-agent">Live Space</a>
+    <a href="https://github.com/eliezeravihail/TorchDocsAgent/tree/main/docs">Docs</a>
+    <a href="https://github.com/pytorch/pytorch/blob/main/LICENSE">Docs license · BSD-3</a>
+  </div>
+</footer>
+
+<script>
+  // theme toggle — stamps data-theme, overriding the media query in both directions
+  (function () {
+    var btn = document.getElementById("themeBtn");
+    btn && btn.addEventListener("click", function () {
+      var root = document.documentElement;
+      var dark = getComputedStyle(root).getPropertyValue("--bg").trim().indexOf("#1") === 0
+        || matchMedia("(prefers-color-scheme: dark)").matches;
+      var cur = root.getAttribute("data-theme");
+      if (!cur) cur = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      root.setAttribute("data-theme", cur === "dark" ? "light" : "dark");
+    });
+  })();
+
+  // hero: play the reasoning trace, then reveal the answer (reduced-motion → final state)
+  (function () {
+    var reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    var rows = Array.prototype.slice.call(document.querySelectorAll("#trace [data-row]"));
+    var answer = document.getElementById("answer");
+    if (reduce) { rows.forEach(function (r) { r.classList.add("show"); }); answer.classList.add("show"); return; }
+    var i = 0;
+    function next() {
+      if (i < rows.length) { rows[i].classList.add("show"); i++; setTimeout(next, 620); }
+      else { setTimeout(function () { answer.classList.add("show"); }, 260); }
+    }
+    setTimeout(next, 420);
+  })();
+</script>
+
+</body>
+</html>
