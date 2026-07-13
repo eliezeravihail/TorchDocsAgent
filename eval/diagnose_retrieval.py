@@ -18,15 +18,20 @@ from dotenv import load_dotenv
 
 # (qid, question, expected-substring) — a representative slice of the API/code
 # misses from retrieval_v1: all descriptive, none containing the symbol token.
+# Each probe also carries a `lemma` from the page's own docstring first sentence
+# (the synopsis line) that is NOT present in its signature/params — used by the
+# tsv reality check below to confirm the descriptive prose actually reached the
+# indexed text (and so whether a byte-identical distance is a real negative or a
+# stale index that never got the enrichment).
 PROBES = [
     ("a06", "What's the standard fully-connected layer that applies a weight matrix "
-            "and bias?", "torch.nn.linear"),
+            "and bias?", "torch.nn.linear", "transformation"),
     ("a17", "For multi-class classification, which loss takes raw logits and the "
-            "target class index?", "crossentropyloss"),
+            "target class index?", "crossentropyloss", "criterion"),
     ("c02", "What exactly is SGD's parameter update step, including momentum, "
-            "mathematically?", "torch.optim.sgd"),
+            "mathematically?", "torch.optim.sgd", "descent"),
     ("a10", "Which normalization layer works per-sample across features, the one "
-            "transformers use?", "layernorm"),
+            "transformers use?", "layernorm", "normalization"),
 ]
 
 POOL = 20
@@ -47,12 +52,23 @@ def main() -> int:
     url_i = POINTER_COLUMNS.replace(" ", "").replace("\n", "").split(",").index("url")
 
     with get_pool().connection() as conn:
+        from index.db import get_meta
+        from index.embed import EMBED_RECIPE
         from index.retrieve import HNSW_EF_SEARCH
+
+        # Recipe-liveness gate. Every distance below is only meaningful against
+        # the index the CODE describes. If the live index was built under an
+        # older recipe, a "byte-identical distance" is not a failed enrichment —
+        # it is a stale index that never got the enrichment. Print both and say
+        # so loudly, so we never again read a stale number as a real negative.
+        live_recipe = get_meta(conn, "embed_recipe")
+        match = "MATCH" if live_recipe == EMBED_RECIPE else "STALE — REBUILD BEFORE TRUSTING"
+        print(f"recipe: code={EMBED_RECIPE!r}  live={live_recipe!r}  [{match}]")
 
         # mirror retrieve(): widen the approximate scan so kind-filtered dense
         # queries here behave like the product path
         conn.execute(f"set hnsw.ef_search = {HNSW_EF_SEARCH:d}")
-        for qid, question, expected in PROBES:
+        for qid, question, expected, lemma in PROBES:
             print(f"\n{'=' * 78}\n{qid}: {question}\n  expected page contains: {expected!r}")
             vec = str(embed_query(question))
             for kd in KINDS:
@@ -106,6 +122,28 @@ def main() -> int:
                     f"{best:.3f}, true dense rank in api = {closer + 1} "
                     f"(api-pool cutoff is top-{POOL})"
                 )
+
+            # tsv reality check: is the page's own docstring prose (the synopsis
+            # line + description body) actually in the indexed text? The lemma is
+            # a descriptive word from the first sentence that does NOT appear in
+            # the signature/params, so a match proves the prose reached the tsv
+            # (and, since indexed_text() feeds one string to both, the vector).
+            # No match on a MATCH recipe = the enrichment genuinely isn't landing
+            # for this page — a real content problem, not a measurement artifact.
+            hit = conn.execute(
+                "select count(*) from chunks where kind = 'api' and url ilike %(pat)s "
+                "and tsv @@ plainto_tsquery('english', %(lemma)s)",
+                {"pat": pat, "lemma": lemma},
+            ).fetchone()[0]
+            total = conn.execute(
+                "select count(*) from chunks where kind = 'api' and url ilike %(pat)s",
+                {"pat": pat},
+            ).fetchone()[0]
+            print(
+                f"  >>> descriptive prose check: {hit}/{total} api chunks of "
+                f"{expected!r} contain lemma {lemma!r} "
+                f"({'PROSE INDEXED' if hit else 'PROSE ABSENT — synopsis/body not landing'})"
+            )
     return 0
 
 
