@@ -65,7 +65,10 @@ If the primary provider is unreachable or a free model is rate-limited, the app 
 - When a question goes beyond the docs, say so honestly and point to where to look (source links, GitHub search) instead of guessing.
 - Stay easy to run locally with minimal setup.
 
-See [PLAN.md](PLAN.md) for the current roadmap and TODO list.
+See [PLAN.md](PLAN.md) for the current roadmap and TODO list, and
+[docs/](docs/README.md) for the design rationale and a per-package reference
+(one doc per code package: `agent/`, `index/`, `ingest/`, `eval/`, `app/`,
+`scripts/`).
 
 ## Building the index
 
