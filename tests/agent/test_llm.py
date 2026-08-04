@@ -396,3 +396,92 @@ def test_redact_scrubs_bearer_tokens_and_keys():
     out = _redact(leaked)
     assert "sk-or-v1-deadbeefcafe" not in out
     assert "Bearer ***" in out or "sk-***" in out
+
+
+# --- streaming (openai-compat) ----------------------------------------------
+
+
+class FakeStreamingClient:
+    """create() streams chunks when stream=True, else returns a normal reply.
+
+    The whole reply is a JSON string (the schema payload); streaming yields it
+    in fixed-size pieces as delta.content, mirroring an OpenAI-compatible host.
+    """
+
+    def __init__(self, full_reply, *, chunk_size=8, stream_error=None):
+        self._full = full_reply
+        self._chunk = chunk_size
+        self._stream_error = stream_error
+        self.requests = []
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+
+    def _create(self, **kwargs):
+        self.requests.append(kwargs)
+        if kwargs.get("stream"):
+            if self._stream_error:
+                raise self._stream_error
+
+            def gen():
+                for i in range(0, len(self._full), self._chunk):
+                    piece = self._full[i : i + self._chunk]
+                    yield SimpleNamespace(
+                        choices=[SimpleNamespace(delta=SimpleNamespace(content=piece))]
+                    )
+
+            return gen()
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=self._full))]
+        )
+
+
+def test_extract_json_string_field_handles_partial_and_escapes():
+    from agent.llm import _extract_json_string_field as ex
+
+    assert ex('{"answer_md": "Build a CNN', "answer_md") == "Build a CNN"  # truncated
+    assert ex('{"answer_md": "line1\\nline2", "x":1}', "answer_md") == "line1\nline2"
+    assert ex('{"other": "z"}', "answer_md") == ""  # field not present yet
+    assert ex('{"answer_md": "caf\\u00e9"}', "answer_md") == "café"  # unicode escape
+    assert ex('{"answer_md": "ab\\', "answer_md") == "ab"  # escape split across chunks
+
+
+def test_openai_compat_streams_answer_md_deltas_to_the_sink():
+    from agent import llm
+
+    payload = Answer(
+        **{**GOOD_PAYLOAD, "answer_md": "Build a CNN end to end."}
+    ).model_dump_json()
+    client = FakeStreamingClient(payload, chunk_size=5)
+    seen = []
+    token = llm.answer_stream_sink.set(seen.append)
+    try:
+        answer = answer_question("q", provider="openai-compat", client=client)
+    finally:
+        llm.answer_stream_sink.reset(token)
+    assert answer.answer_md == "Build a CNN end to end."  # structured answer intact
+    assert client.requests[0].get("stream") is True  # it actually streamed
+    assert seen and seen[-1] == "Build a CNN end to end."  # last delta = full prose
+    assert all(b.startswith(a) for a, b in zip(seen, seen[1:], strict=False))  # monotonic prefixes
+
+
+def test_openai_compat_streaming_error_falls_back_to_non_streaming():
+    from agent import llm
+
+    client = FakeStreamingClient(
+        Answer(**GOOD_PAYLOAD).model_dump_json(), stream_error=RuntimeError("boom")
+    )
+    token = llm.answer_stream_sink.set(lambda s: None)
+    try:
+        answer = answer_question("q", provider="openai-compat", client=client)
+    finally:
+        llm.answer_stream_sink.reset(token)
+    assert answer.answer_md == "Use SGD."  # the non-streaming fallback produced it
+    assert client.requests[0].get("stream") is True  # tried to stream first
+    assert not client.requests[1].get("stream")  # then fell back to non-streaming
+
+
+def test_openai_compat_does_not_stream_without_a_sink():
+    # no sink set → the normal single-shot path, never a streaming request
+    client = FakeStreamingClient(Answer(**GOOD_PAYLOAD).model_dump_json())
+    answer = answer_question("q", provider="openai-compat", client=client)
+    assert answer.answer_md == "Use SGD."
+    assert not client.requests[0].get("stream")

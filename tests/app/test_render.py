@@ -89,6 +89,32 @@ def _join_background_freshness(timeout=2.0):
         thread.join(timeout)
 
 
+def test_respond_streams_partial_answer_prose_before_the_final(monkeypatch):
+    # the answer path emits streaming deltas (via the llm sink); respond paints
+    # the growing prose with a block cursor BEFORE the final answer swaps in
+    import time
+
+    from agent import llm
+
+    monkeypatch.setattr("app.main.THINKING_TICK", 0.02)
+
+    def routed(q, **k):
+        sink = llm.answer_stream_sink.get()
+        assert sink is not None  # respond set it on the worker thread
+        sink("Build a CNN")
+        time.sleep(0.1)
+        sink("Build a CNN end to end.")
+        time.sleep(0.05)
+        return Answer(answer_md="Build a CNN end to end.")
+
+    monkeypatch.setattr("app.main.answer_routed", routed)
+    chunks = list(respond("how do I build a CNN?"))
+    # a mid-stream frame shows the partial prose with the cursor
+    assert any("Build a CNN" in c and "▍" in c for c in chunks)
+    # the final chunk is the finished answer, no cursor
+    assert "Build a CNN end to end." in chunks[-1] and "▍" not in chunks[-1]
+
+
 def test_respond_ends_with_the_answer_no_post_answer_spinner(monkeypatch):
     # option A: the wheel stops WITH the answer. The answer is the final yielded
     # value and nothing (spinner, regeneration note) trails it — the "spinner

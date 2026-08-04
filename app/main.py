@@ -258,18 +258,32 @@ def respond(question: str, request: gr.Request = None):
 
     result: dict = {}
     trace: list[str] = []
+    partial: dict = {"md": ""}  # the answer prose as it streams in
     trace_lock = threading.Lock()  # the worker appends; this generator reads
 
     def progress(line: str) -> None:
         with trace_lock:
             trace.append(line)
 
+    def on_delta(prose: str) -> None:
+        with trace_lock:
+            partial["md"] = prose
+
     def work():
+        # set the streaming sink INSIDE the worker thread: the answer pipeline
+        # runs here, and a new thread has its own context, so the compat answer
+        # path (agent/llm.py) sees the sink and streams answer_md tokens through
+        # on_delta. Reset on the way out so nothing leaks across requests.
+        from agent import llm
+
+        token = llm.answer_stream_sink.set(on_delta)
         try:
             result["md"] = _pipeline(question, request, out=result, progress=progress)
         except Exception as exc:  # noqa: BLE001 — the UI must never hang on a crash
             print(f"[app] pipeline thread failed: {type(exc).__name__}: {exc}", flush=True)
             result["md"] = ERROR_NOTE
+        finally:
+            llm.answer_stream_sink.reset(token)
 
     worker = threading.Thread(target=work, daemon=True)
     worker.start()
@@ -278,7 +292,14 @@ def respond(question: str, request: gr.Request = None):
         worker.join(timeout=THINKING_TICK)  # wait a tick (or finish sooner)
         with trace_lock:
             lines = list(trace)
-        yield _render_trace(lines, next(frames))  # grey trace + turning wheel
+            prose = partial["md"]
+        # once the answer starts streaming, show the prose growing (with a
+        # block cursor) instead of the grey trace — the wait turns into the
+        # answer being written. Before that, the animated trace + wheel.
+        if prose:
+            yield f"{prose} ▍"
+        else:
+            yield _render_trace(lines, next(frames))  # grey trace + turning wheel
     md = result.get("md", ERROR_NOTE)
     yield md  # the finished answer, in normal (black) text — the generator ends
     # here. No post-answer spinner: the wheel stopped the instant the answer
