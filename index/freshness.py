@@ -43,6 +43,16 @@ def enabled() -> bool:
     return os.environ.get("TORCHDOCS_FRESHNESS", "1") != "0"
 
 
+# The revalidation fetch is deliberately tight. The crawl's default (30s
+# timeout, 3 retries, 3 redirect hops) is right for an overnight build but
+# catastrophic here: it once let a single slow page ride 4×3×30s ≈ minutes,
+# and freshness is a best-effort background nicety, not the answer. One try,
+# one hop, a few seconds — a page that can't answer fast is simply left for
+# the next question (or the weekly crawl) instead of stalling a worker.
+def _fetch_timeout() -> float:
+    return float(os.environ.get("TORCHDOCS_FRESHNESS_FETCH_TIMEOUT", "6"))
+
+
 _LOCK = threading.Lock()
 _checked: dict[str, float] = {}  # url → monotonic time of the last live check
 
@@ -74,7 +84,7 @@ def _live_units(url: str) -> list[dict]:
     from ingest.crawl import extract_main_html, to_markdown
     from ingest.discover import fetch_html
 
-    html = fetch_html(url)
+    html = fetch_html(url, max_hops=1, timeout=_fetch_timeout(), retries=1)
     title, main = extract_main_html(html)
     body = to_markdown(main)
     meta = {
