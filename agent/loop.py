@@ -18,6 +18,16 @@ from agent.schemas import Answer, Referral
 BUDGETS = {"search_docs": 6, "read_page": 2, "ask_source": 1}
 MAX_STEPS = sum(BUDGETS.values()) + 2
 
+# Stop when the loop stops LEARNING. A weak planner on a slow free-tier model
+# tends to re-issue near-identical searches — each one a full LLM round-trip
+# that returns pages already gathered (measured: one CNN question spent 7 such
+# searches, minutes of wall-clock, all on the same CIFAR10 chunks). A step that
+# adds NO new section or referral made no progress; after this many in a row we
+# answer with what we have. This can only END the loop sooner on stagnation —
+# any step that adds new material resets the counter, so genuine multi-source
+# exploration (the loop's whole value) is never cut short.
+STAGNATION_LIMIT = 2
+
 PLANNER_SYSTEM = (
     "You are planning how to answer a PyTorch question using tools. Each turn, "
     "reply with ONE json object and nothing else:\n"
@@ -113,6 +123,7 @@ def answer_agentic(
     do_search(question, None, sections=sections, seen_urls=seen_urls, transcript=transcript)
     emit_last()
 
+    stagnant = 0
     for _ in range(MAX_STEPS):
         action = _plan(question, transcript, budgets, provider, client)
         name = action.get("action")
@@ -124,12 +135,22 @@ def answer_agentic(
             continue
         budgets[name] -= 1
 
+        gathered = (len(sections), len(referrals))
         execute_tool(
             name, action, question,
             sections=sections, referrals=referrals,
             seen_urls=seen_urls, transcript=transcript,
         )
         emit_last()
+
+        # a step that surfaced nothing new made no progress; stop thrashing on
+        # repeated dead-end searches once it happens STAGNATION_LIMIT times over
+        if (len(sections), len(referrals)) == gathered:
+            stagnant += 1
+            if stagnant >= STAGNATION_LIMIT:
+                break
+        else:
+            stagnant = 0
 
     if progress:
         progress("✍️ writing the answer")
