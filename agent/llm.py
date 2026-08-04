@@ -21,10 +21,25 @@ import random
 import re
 import threading
 import time
+from collections.abc import Callable
+from contextvars import ContextVar
 
 from pydantic import ValidationError
 
 from agent.schemas import Answer
+
+# Optional prose sink for streaming. When set (the web app sets it on its answer
+# worker thread), the openai-compat answer path streams the model's tokens and
+# calls the sink with the growing `answer_md` prose so the UI can paint the
+# answer as it is written instead of after. Unset everywhere else (eval,
+# scripts, tests) → the normal single-shot, non-streaming path. A ContextVar,
+# not a parameter, so it needn't thread through route → loop → grounded →
+# answer_from_sections → answer_question; it is read only where streaming
+# happens. Set it INSIDE the worker thread (a new thread starts with its own
+# context), so the whole downstream pipeline in that thread sees it.
+answer_stream_sink: ContextVar[Callable[[str], None] | None] = ContextVar(
+    "answer_stream_sink", default=None
+)
 
 GEMINI_MODEL = os.environ.get("TORCHDOCS_GEMINI_MODEL", "gemini-2.5-flash")
 ANTHROPIC_MODEL = os.environ.get("TORCHDOCS_ANTHROPIC_MODEL", "claude-sonnet-5")
@@ -525,6 +540,76 @@ def _parse_gemini(response) -> Answer | None:
 
 # --- OpenAI-compatible hosts (DeepInfra / Nebius / OpenRouter / ...) ---------
 
+_ESCAPES = {"n": "\n", "t": "\t", "r": "\r", '"': '"', "\\": "\\", "/": "/", "b": "\b", "f": "\f"}
+
+
+def _extract_json_string_field(buf: str, field: str) -> str:
+    """Best-effort decode of one string field from possibly-truncated JSON.
+
+    Surfaces the growing `answer_md` while the rest of the JSON object is still
+    streaming: find `"field": "…"` and decode the value up to the first
+    UNESCAPED closing quote (or the end of what has arrived so far). Returns ""
+    until the opening quote is present. Not a general JSON parser — it only
+    tracks backslash escapes to find the true end of the string.
+    """
+    m = re.search(rf'"{re.escape(field)}"\s*:\s*"', buf)
+    if not m:
+        return ""
+    i, out = m.end(), []
+    while i < len(buf):
+        c = buf[i]
+        if c == "\\":
+            if i + 1 >= len(buf):
+                break  # escape split across chunks — wait for the next piece
+            nxt = buf[i + 1]
+            if nxt == "u":
+                if i + 6 > len(buf):
+                    break  # \uXXXX not fully arrived yet
+                try:
+                    out.append(chr(int(buf[i + 2 : i + 6], 16)))
+                    i += 6
+                    continue
+                except ValueError:
+                    pass
+            out.append(_ESCAPES.get(nxt, nxt))
+            i += 2
+            continue
+        if c == '"':
+            break  # unescaped closing quote → end of the value
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def _stream_compat(client, messages, *, json_mode: bool) -> str:
+    """Stream one openai-compat completion, pushing answer_md deltas to the sink.
+
+    Returns the full raw reply; the caller validates it into an Answer exactly
+    as the non-streaming path does. Best-effort by contract: the caller falls
+    back to the non-streaming path (with its full retry/model fallback) on any
+    error, so this needs none of its own.
+    """
+    sink = answer_stream_sink.get()
+    model = _skip_cooling(_compat_models(), "model")[0]
+    kwargs = {"response_format": {"type": "json_object"}} if json_mode else {}
+    stream = client.chat.completions.create(model=model, messages=messages, stream=True, **kwargs)
+    buf, last = [], ""
+    for chunk in stream:
+        choices = getattr(chunk, "choices", None)
+        if not choices:
+            continue
+        delta = getattr(choices[0], "delta", None)
+        piece = getattr(delta, "content", None) if delta else None
+        if not piece:
+            continue
+        buf.append(piece)
+        if sink is not None:
+            prose = _extract_json_string_field("".join(buf), "answer_md")
+            if prose and prose != last:
+                last = prose
+                sink(prose)
+    return "".join(buf)
+
 
 def _answer_openai_compat(
     question: str, system: str, client, retries: int, timeout: float
@@ -540,8 +625,21 @@ def _answer_openai_compat(
         {"role": "user", "content": question},
     ]
 
-    response, json_mode = _compat_complete(client, messages, retries=retries, json_mode=True)
-    reply = response.choices[0].message.content or ""
+    reply, json_mode = "", True
+    if answer_stream_sink.get() is not None:
+        # a sink is set (the web app) → stream the prose for perceived speed;
+        # any streaming error falls through to the resilient non-streaming path
+        try:
+            reply = _stream_compat(client, messages, json_mode=True)
+        except Exception as exc:  # noqa: BLE001 — streaming is best-effort
+            print(
+                _redact(f"[llm] streaming failed ({type(exc).__name__}: {exc}); non-streaming"),
+                flush=True,
+            )
+            reply = ""
+    if not reply:
+        response, json_mode = _compat_complete(client, messages, retries=retries, json_mode=True)
+        reply = response.choices[0].message.content or ""
     try:
         return Answer.model_validate_json(reply)
     except ValidationError as exc:

@@ -156,3 +156,37 @@ def test_planner_kind_reaches_search_docs(monkeypatch):
     # seed search first (no kind), then the planner's api-scoped search
     assert seen[0] == ("what loss functions exist for classification?", None)
     assert seen[1] == ("cross entropy loss", "api")
+
+
+def test_loop_stops_when_searches_stop_adding_new_material(monkeypatch):
+    # the latency fix: a weak planner that re-issues the same dead-end search
+    # (the observed "7 near-identical searches") must not burn the whole budget.
+    # Every repeat returns pages already gathered → no progress → after
+    # STAGNATION_LIMIT such steps the loop answers with what it has.
+    from agent.loop import STAGNATION_LIMIT
+
+    calls = {"plan": 0}
+    same = {"url": "https://docs.pytorch.org/x.html", "anchor": "", "content": "c"}
+
+    def plan(prompt, system, provider=None, client=None):
+        calls["plan"] += 1
+        return '{"action":"search_docs","query":"training a classifier"}'
+
+    monkeypatch.setattr("agent.llm._raw_completion", plan)
+    monkeypatch.setattr(
+        "agent.tools.search_docs",
+        lambda q, library=None, kind=None, k=8: {
+            "query": q, "sections": [same], "titles": ["Training a Classifier"]
+        },
+    )
+    answered = {}
+    monkeypatch.setattr(
+        "agent.grounded.answer_from_sections",
+        lambda q, s, referrals=None, provider=None, client=None: answered.setdefault("n", len(s))
+        or Answer(answer_md="ok"),
+    )
+    answer_agentic("how do I build a CNN end to end?")
+    # seed search gathered the one section; the next STAGNATION_LIMIT planner
+    # searches add nothing new → stop. Far below the 6-search budget / 11 steps.
+    assert calls["plan"] == STAGNATION_LIMIT
+    assert answered["n"] == 1  # answered from the single unique section

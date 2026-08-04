@@ -86,12 +86,6 @@ TRACE_STYLE = "color:var(--body-text-color-subdued)"
 # failure marker (scripts/smoke_space.py). The real exception goes to the logs;
 # the user never sees hosts, model slugs, or config internals.
 ERROR_NOTE = "⚠️ Something went wrong answering that. Please try again in a moment."
-# Appended when the post-answer freshness pass found the cited docs drifted and
-# regenerated the answer from the just-refreshed content (index/freshness.py).
-FRESHNESS_NOTE = (
-    "\n\n<sub>↻ The docs changed since they were last indexed — this answer was "
-    "regenerated from the latest content.</sub>"
-)
 
 _RATE_LOCK = threading.Lock()
 _RATE_BUCKETS: dict[str, deque[float]] = defaultdict(deque)
@@ -207,24 +201,55 @@ def _render_trace(lines: list[str], spinner: str | None) -> str:
     return f'<span style="{TRACE_STYLE}">{"<br>".join(rows)}</span>'
 
 
+# The most recent background freshness thread, kept only as a test seam so a
+# test can join it deterministically instead of sleeping. Production ignores it.
+_LAST_FRESHNESS: threading.Thread | None = None
+
+
+def _spawn_freshness(urls: list[str]) -> threading.Thread | None:
+    """Start the post-answer freshness heal on a detached daemon thread.
+
+    Returns the started thread (or None when freshness is disabled). The UI has
+    already delivered its final answer, so this only ever improves the NEXT
+    answer — it must not block or stream. Best-effort: every failure is caught
+    and logged on the worker so it can never surface to a user.
+    """
+    from index import freshness
+
+    if not freshness.enabled():
+        return None
+
+    def _run() -> None:
+        try:
+            freshness.refresh_pages(urls)
+        except Exception as exc:  # noqa: BLE001 — background heal is best-effort
+            print(f"[app] background freshness failed: {type(exc).__name__}: {exc}", flush=True)
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+    global _LAST_FRESHNESS
+    _LAST_FRESHNESS = thread
+    return thread
+
+
 def respond(question: str, request: gr.Request = None):
     """UI entrypoint: show a LIVE thinking indicator, then the answer.
 
     A generator so Gradio streams feedback the instant a question is submitted.
     The pipeline runs on a worker thread while this generator emits an animated
     spinner + stage label every THINKING_TICK seconds — so the multi-second wait
-    reads as "working", not "frozen" — then yields the finished markdown.
+    reads as "working", not "frozen" — then yields the finished markdown as its
+    LAST value and ends. The spinner ends WITH the answer: there is no
+    post-answer spinner.
 
-    After the answer is shown, a stale-while-revalidate pass re-checks the
-    CITED pages against the live docs (index/freshness.py). The answer stays
-    fully visible the whole time, with a bare spinner (just the wheel, no
-    words) under it while the check runs — the user reads while we verify —
-    and everything swaps in place (Gradio streams the same output component;
-    no page refresh). Clean check → the spinner simply disappears. Drift → the
-    stored copies self-heal, and the answer is regenerated from the fresh
-    content and swapped in with the ↻ note (the spinner keeps turning during
-    the regeneration). Any freshness failure clears the spinner and leaves the
-    shown answer untouched.
+    Freshness self-heal (index/freshness.py) still runs, but entirely in the
+    BACKGROUND — a detached daemon thread revalidates the cited pages against
+    the live docs and heals any drifted chunks in place, so the NEXT asker of
+    this question gets the corrected answer. It never touches this stream:
+    revalidation is a live, multi-page network fetch, and holding the user's
+    spinner on it spun the wheel for minutes when the docs server was slow.
+    Best-effort — any failure is swallowed on the worker thread.
+
     The first yield is the static THINKING_NOTE (immediate paint);
     gradio_client.predict returns the LAST yielded value, so the smoke test
     still gets a real answer.
@@ -233,18 +258,32 @@ def respond(question: str, request: gr.Request = None):
 
     result: dict = {}
     trace: list[str] = []
+    partial: dict = {"md": ""}  # the answer prose as it streams in
     trace_lock = threading.Lock()  # the worker appends; this generator reads
 
     def progress(line: str) -> None:
         with trace_lock:
             trace.append(line)
 
+    def on_delta(prose: str) -> None:
+        with trace_lock:
+            partial["md"] = prose
+
     def work():
+        # set the streaming sink INSIDE the worker thread: the answer pipeline
+        # runs here, and a new thread has its own context, so the compat answer
+        # path (agent/llm.py) sees the sink and streams answer_md tokens through
+        # on_delta. Reset on the way out so nothing leaks across requests.
+        from agent import llm
+
+        token = llm.answer_stream_sink.set(on_delta)
         try:
             result["md"] = _pipeline(question, request, out=result, progress=progress)
         except Exception as exc:  # noqa: BLE001 — the UI must never hang on a crash
             print(f"[app] pipeline thread failed: {type(exc).__name__}: {exc}", flush=True)
             result["md"] = ERROR_NOTE
+        finally:
+            llm.answer_stream_sink.reset(token)
 
     worker = threading.Thread(target=work, daemon=True)
     worker.start()
@@ -253,61 +292,28 @@ def respond(question: str, request: gr.Request = None):
         worker.join(timeout=THINKING_TICK)  # wait a tick (or finish sooner)
         with trace_lock:
             lines = list(trace)
-        yield _render_trace(lines, next(frames))  # grey trace + turning wheel
+            prose = partial["md"]
+        # once the answer starts streaming, show the prose growing (with a
+        # block cursor) instead of the grey trace — the wait turns into the
+        # answer being written. Before that, the animated trace + wheel.
+        if prose:
+            yield f"{prose} ▍"
+        else:
+            yield _render_trace(lines, next(frames))  # grey trace + turning wheel
     md = result.get("md", ERROR_NOTE)
-    yield md  # the answer, in normal (black) text, replaces the grey trace
+    yield md  # the finished answer, in normal (black) text — the generator ends
+    # here. No post-answer spinner: the wheel stopped the instant the answer
+    # appeared. The freshness self-heal below is detached and never streams.
 
-    # ---- stale-while-revalidate: the answer is already on screen ----------
+    # Fire-and-forget freshness: revalidate the CITED pages against the live
+    # docs and heal any drifted chunks in place, so the NEXT asker of this
+    # question gets the corrected answer. Background-only by decision — a live,
+    # multi-page network fetch must never hold the user's spinner (it used to,
+    # and a slow docs server spun it for minutes). Best-effort; the worker
+    # swallows and logs any failure, and the shown answer is already final.
     answer = result.get("answer")
-    if answer is None or not answer.citations:
-        return
-    try:
-        from index import freshness
-
-        if not freshness.enabled():
-            return
-
-        def run_below(target):
-            """Run `target` on a thread; while it runs, keep the ANSWER on
-            screen with a bare spinner under it — just the wheel, no words
-            (in-place updates: never a blank screen, never a page refresh)."""
-            thread = threading.Thread(target=target, daemon=True)
-            thread.start()
-            while True:
-                thread.join(timeout=THINKING_TICK)
-                if not thread.is_alive():
-                    return
-                yield f"{md}\n\n<sub>{next(frames)}</sub>"
-
-        check: dict = {}
-
-        def verify():
-            try:
-                check["drifted"] = freshness.refresh_pages([c.url for c in answer.citations])
-            except Exception as exc:  # noqa: BLE001 — a thread exception must not vanish
-                print(f"[app] freshness check failed: {type(exc).__name__}: {exc}", flush=True)
-
-        yield from run_below(verify)
-        if not check.get("drifted"):
-            yield md  # clean (or check failed): just clear the spinner line
-            return
-
-        # the text the answer was grounded in changed → answer again from the
-        # just-refreshed content and swap it in, flagged so the user knows why
-        print("[app] cited docs drifted; regenerating", flush=True)
-        redo: dict = {}
-
-        def regenerate():
-            try:
-                redo["md"] = render(answer_routed(question)) + FRESHNESS_NOTE
-            except Exception as exc:  # noqa: BLE001 — keep the original answer instead
-                print(f"[app] regeneration failed: {type(exc).__name__}: {exc}", flush=True)
-
-        yield from run_below(regenerate)
-        yield redo.get("md", md)  # a failed regeneration keeps the original
-    except Exception as exc:  # noqa: BLE001 — never disturb the shown answer
-        print(f"[app] freshness pass skipped: {type(exc).__name__}: {exc}", flush=True)
-        yield md  # clear any spinner line that was showing
+    if answer is not None and answer.citations:
+        _spawn_freshness([c.url for c in answer.citations])
 
 
 def build_ui():

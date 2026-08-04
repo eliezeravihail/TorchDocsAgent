@@ -106,6 +106,47 @@ def test_page_synopsis_empty_when_page_has_no_prose():
     assert page_synopsis("# title\n\ntorch.add(input, other)\n\n* alpha — scale") == ""
 
 
+# The synopsis tests above use hand-authored markdown. That is exactly how the
+# extraction was mis-tuned before: the hand-written shape drifted from what
+# markdownify actually emits for a Sphinx <dl>, so the code passed its unit
+# tests while producing nothing on the real corpus. This test pins the shape to
+# reality — authentic pytorch-theme signature HTML through the SAME crawl path
+# the corpus is built with (extract_main_html + markdownify), then asserts the
+# docstring sentence is recovered. If a markdownify upgrade changes the <dl>
+# rendering, this fails here instead of silently on the live index.
+SPHINX_API_HTML = """<!DOCTYPE html><html><head><title>CrossEntropyLoss</title></head>
+<body><nav>chrome</nav><article class="pytorch-article">
+<h1>CrossEntropyLoss<a class="headerlink" href="#torch.nn.CrossEntropyLoss">¶</a></h1>
+<dl class="py class">
+<dt class="sig sig-object py" id="torch.nn.CrossEntropyLoss">
+<em class="property"><span class="pre">class</span> </em>
+<span class="sig-prename descclassname"><span class="pre">torch.nn.</span></span>
+<span class="sig-name descname"><span class="pre">CrossEntropyLoss</span></span>
+<span class="sig-paren">(</span>
+<em class="sig-param"><span class="pre">weight=None</span></em>
+<span class="sig-paren">)</span>
+<a class="reference external"
+   href="https://github.com/pytorch/pytorch/blob/v2/loss.py"><span class="pre">[source]</span></a>
+<a class="headerlink" href="#torch.nn.CrossEntropyLoss">¶</a></dt>
+<dd><p>This criterion computes the cross entropy loss between input logits and target.</p>
+<p>It is useful when training a classification problem with C classes.</p>
+</dd></dl></article></body></html>"""
+
+
+def test_page_synopsis_matches_real_markdownify_output():
+    from ingest.chunk_docs import page_synopsis
+    from ingest.crawl import extract_main_html, to_markdown
+
+    _, main = extract_main_html(SPHINX_API_HTML)
+    body = to_markdown(main)
+    # guard the assumption the extractor rests on: the description lands on a
+    # `:` definition line, not fused into the signature paragraph
+    assert "\n:   This criterion" in body
+    assert page_synopsis(body) == (
+        "This criterion computes the cross entropy loss between input logits and target."
+    )
+
+
 def test_chunk_page_attaches_synopsis_to_api_units_only():
     units = chunk_page(META, PAGE_MD)
     # every unit of the api page carries the page's summary sentence
