@@ -70,6 +70,68 @@ See [PLAN.md](PLAN.md) for the current roadmap and TODO list, and
 (one doc per code package: `agent/`, `index/`, `ingest/`, `eval/`, `app/`,
 `scripts/`).
 
+## How it works
+
+Two pipelines — an offline index build and the online answer path.
+
+**Build the index (offline, weekly):** crawl the PyTorch docs → snapshot to
+markdown (unchanged pages skipped) → chunk by heading → **enrich** each page (a
+one-line synopsis, an LLM-written *gloss*, and a few hypothetical questions it
+answers) → embed locally with `bge-small-en-v1.5` on CPU into Neon Postgres
+(`pgvector` for dense vectors, `tsvector` for keywords).
+
+**Answer a question (online):**
+
+```
+question
+  → guard            prompt-injection + off-topic rejection
+  → route            zero-LLM cost heuristic:
+                       simple        → single-shot grounded answer
+                       multi-source  → agentic tool loop
+  → retrieve         hybrid per-kind (dense + keyword, RRF, interleaved)
+  → answer           context-only, exact citations, statically-checked code
+  → stream + verify  shown from the index at once, then revalidated live
+```
+
+The answer is served from the stored index immediately and streamed as it is
+written; afterwards the cited pages are revalidated against the live docs, and
+if one changed the index self-heals and the answer updates in place.
+
+## Key engineering decisions
+
+Each choice is a trade-off decided against measurements, not assumed:
+
+- **Hybrid, per-kind retrieval over pure vector search.** Reference, tutorial
+  and guide pages are searched as separate pools (dense `pgvector` + keyword
+  `tsvector`, fused with RRF, then interleaved), so a how-to still leads with a
+  tutorial and a symbol lookup still finds the API page — cosine similarity
+  alone buried the terse reference pages.
+- **Doc-side enrichment to bridge the vocabulary gap.** Terse API signatures
+  embed far from the descriptive questions users actually ask, so each page
+  carries a synopsis, an LLM *gloss*, and hypothetical questions it answers
+  (Contextual Retrieval / QuOTE-style). This — not a reranker — is the lever
+  that moved recall: an ablation showed a cross-encoder reranker didn't change
+  recall/MRR, so it was **removed** rather than kept for show.
+- **Cost-aware routing.** A zero-LLM-call heuristic sends only multi-source
+  questions (catalog / compare / recipe / internals) to the expensive agent
+  loop and everything else to a single-shot pass — the loop's measured value is
+  real only there (coverage **0.57 vs 0.13** single-shot). It fails open: a
+  misrouted question still gets a correct, if slower, answer.
+- **An agent loop that stops when it stops learning.** The planner drives the
+  tools within budgets; a step that surfaces no new section or referral counts
+  as no progress, and after two in a row the loop answers — cutting the
+  redundant-search latency a weak free-tier planner would otherwise rack up.
+- **Stale-while-revalidate self-healing, plus provider/model failover.**
+  Answers never block on the network: the index serves instantly and
+  revalidates in the background, healing drifted pages in place; if an LLM
+  provider or free model fails, the app fails over to the next so one outage
+  doesn't take the Space down.
+- **Local embeddings, grounded answers, measured results.** Embeddings run on
+  CPU with an open model (no per-item quota or key; the same model embeds docs
+  and queries), answers are constrained to the retrieved context with exact
+  citations, and every figure below comes from the project's own evaluation
+  harness with sample sizes and caveats stated.
+
 ## Results (measured, not asserted)
 
 All numbers come from the project's own evaluation harness ([`eval/`](docs/eval/README.md)),
