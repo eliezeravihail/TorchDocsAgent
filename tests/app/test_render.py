@@ -147,6 +147,8 @@ def test_respond_regenerates_in_place_when_a_cited_page_drifted(monkeypatch):
     # the behaviour the user asked for: answer from the index immediately; if a
     # cited page DRIFTED, surface an "updating…" spinner and swap in the answer
     # regenerated from the freshly-healed content, flagged with the ↻ note.
+    import time
+
     from app.main import FRESHNESS_NOTE, THINKING_SPINNER
 
     monkeypatch.setattr("app.main.THINKING_TICK", 0.02)
@@ -154,6 +156,8 @@ def test_respond_regenerates_in_place_when_a_cited_page_drifted(monkeypatch):
 
     def routed(q, **k):
         calls["n"] += 1
+        if calls["n"] == 2:
+            time.sleep(0.1)  # regeneration takes a few ticks → the spinner renders
         return _cited_answer("stale answer" if calls["n"] == 1 else "fresh answer")
 
     def refresh(urls):
