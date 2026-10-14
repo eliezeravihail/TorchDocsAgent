@@ -80,15 +80,6 @@ def _cited_answer(text):
     )
 
 
-def _join_background_freshness(timeout=2.0):
-    """Wait for the detached post-answer heal thread (test seam) to finish."""
-    import app.main
-
-    thread = app.main._LAST_FRESHNESS
-    if thread is not None:
-        thread.join(timeout)
-
-
 def test_respond_streams_partial_answer_prose_before_the_final(monkeypatch):
     # the answer path emits streaming deltas (via the llm sink); respond paints
     # the growing prose with a block cursor BEFORE the final answer swaps in
@@ -105,7 +96,7 @@ def test_respond_streams_partial_answer_prose_before_the_final(monkeypatch):
         time.sleep(0.1)
         sink("Build a CNN end to end.")
         time.sleep(0.05)
-        return Answer(answer_md="Build a CNN end to end.")
+        return Answer(answer_md="Build a CNN end to end.")  # no citations → no freshness
 
     monkeypatch.setattr("app.main.answer_routed", routed)
     chunks = list(respond("how do I build a CNN?"))
@@ -115,48 +106,96 @@ def test_respond_streams_partial_answer_prose_before_the_final(monkeypatch):
     assert "Build a CNN end to end." in chunks[-1] and "▍" not in chunks[-1]
 
 
-def test_respond_ends_with_the_answer_no_post_answer_spinner(monkeypatch):
-    # option A: the wheel stops WITH the answer. The answer is the final yielded
-    # value and nothing (spinner, regeneration note) trails it — the "spinner
-    # that never stopped" was the old in-view freshness pass; it is gone.
+def test_respond_clean_freshness_check_is_silent(monkeypatch):
+    # stale-while-revalidate, the common case: the cited pages are revalidated
+    # after the answer is shown; a CLEAN check shows no spinner and never
+    # regenerates — the answer served from the index simply stands.
     from app.main import THINKING_SPINNER
 
-    monkeypatch.setattr("app.main.answer_routed", lambda q, **k: _cited_answer("the answer"))
-    monkeypatch.setattr("index.freshness.refresh_pages", lambda urls: set(urls))
-    chunks = list(respond("how do I use SGD?"))
-    _join_background_freshness()
-    assert "the answer" in chunks[-1]
-    assert "regenerated" not in chunks[-1]
-    assert all(frame not in chunks[-1] for frame in THINKING_SPINNER)
-
-
-def test_respond_heals_cited_pages_in_the_background(monkeypatch):
-    # freshness still runs — but detached, so it can only improve the NEXT
-    # answer. It is invoked with exactly the cited urls, and the visible answer
-    # is generated ONCE (no in-view regeneration doubling the latency).
-    seen = {}
     calls = {"n": 0}
 
     def routed(q, **k):
         calls["n"] += 1
         return _cited_answer("the answer")
 
+    monkeypatch.setattr("app.main.answer_routed", routed)
+    monkeypatch.setattr("index.freshness.refresh_pages", lambda urls: set())  # no drift
+    chunks = list(respond("how do I use SGD?"))
+    assert "the answer" in chunks[-1]
+    assert "updating" not in chunks[-1] and "↻" not in chunks[-1]
+    assert all(frame not in chunks[-1] for frame in THINKING_SPINNER)
+    assert calls["n"] == 1  # answered once; a clean check never regenerates
+
+
+def test_respond_revalidates_the_cited_pages(monkeypatch):
+    # the check runs against exactly the pages the answer cited
+    seen = {}
+
     def refresh(urls):
         seen["urls"] = list(urls)
-        return set(urls)  # report drift — must NOT trigger a visible redo
+        return set()
+
+    monkeypatch.setattr("app.main.answer_routed", lambda q, **k: _cited_answer("the answer"))
+    monkeypatch.setattr("index.freshness.refresh_pages", refresh)
+    list(respond("how do I use SGD?"))
+    assert seen["urls"] == [
+        "https://docs.pytorch.org/docs/stable/generated/torch.optim.SGD.html"
+    ]
+
+
+def test_respond_regenerates_in_place_when_a_cited_page_drifted(monkeypatch):
+    # the behaviour the user asked for: answer from the index immediately; if a
+    # cited page DRIFTED, surface an "updating…" spinner and swap in the answer
+    # regenerated from the freshly-healed content, flagged with the ↻ note.
+    import time
+
+    from app.main import FRESHNESS_NOTE, THINKING_SPINNER
+
+    monkeypatch.setattr("app.main.THINKING_TICK", 0.02)
+    calls = {"n": 0}
+
+    def routed(q, **k):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            time.sleep(0.1)  # regeneration takes a few ticks → the spinner renders
+        return _cited_answer("stale answer" if calls["n"] == 1 else "fresh answer")
+
+    def refresh(urls):
+        return set(urls)  # drift on every cited page
 
     monkeypatch.setattr("app.main.answer_routed", routed)
     monkeypatch.setattr("index.freshness.refresh_pages", refresh)
     chunks = list(respond("how do I use SGD?"))
-    _join_background_freshness()
-    assert calls["n"] == 1  # answered once; drift does not regenerate in view
-    assert seen["urls"] == [
-        "https://docs.pytorch.org/docs/stable/generated/torch.optim.SGD.html"
-    ]
-    assert "the answer" in chunks[-1]
+    # the updating state was shown: the answer still visible, a wheel + caption
+    updating = [c for c in chunks if "stale answer" in c and "updating" in c]
+    assert updating and any(any(f in c for f in THINKING_SPINNER) for c in updating)
+    # the final chunk is the regenerated answer with the freshness note
+    assert "fresh answer" in chunks[-1] and FRESHNESS_NOTE in chunks[-1]
+    assert calls["n"] == 2  # answered once, regenerated once after drift
 
 
-def test_respond_skips_background_freshness_when_disabled(monkeypatch):
+def test_respond_regeneration_deadline_keeps_the_shown_answer(monkeypatch):
+    # drift detected, but regeneration outruns its deadline → the shown answer
+    # stands rather than hanging on a spinner forever
+    import time
+
+    monkeypatch.setattr("app.main.THINKING_TICK", 0.02)
+    monkeypatch.setattr("app.main.FRESHNESS_REGEN_DEADLINE", 0.1)
+    calls = {"n": 0}
+
+    def routed(q, **k):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            time.sleep(0.5)  # regeneration overruns the 0.1s deadline
+        return _cited_answer("the answer" if calls["n"] == 1 else "fresh answer")
+
+    monkeypatch.setattr("app.main.answer_routed", routed)
+    monkeypatch.setattr("index.freshness.refresh_pages", lambda urls: set(urls))
+    chunks = list(respond("how do I use SGD?"))
+    assert "the answer" in chunks[-1]  # original kept; no indefinite spinner
+
+
+def test_respond_skips_freshness_when_disabled(monkeypatch):
     # the kill switch keeps the network fetch from ever starting
     monkeypatch.setenv("TORCHDOCS_FRESHNESS", "0")
     called = {"n": 0}
@@ -168,12 +207,11 @@ def test_respond_skips_background_freshness_when_disabled(monkeypatch):
     monkeypatch.setattr("app.main.answer_routed", lambda q, **k: _cited_answer("the answer"))
     monkeypatch.setattr("index.freshness.refresh_pages", refresh)
     chunks = list(respond("how do I use SGD?"))
-    _join_background_freshness()
     assert called["n"] == 0
     assert "the answer" in chunks[-1]
 
 
-def test_respond_background_freshness_failure_never_disturbs_the_answer(monkeypatch):
+def test_respond_freshness_failure_never_disturbs_the_answer(monkeypatch):
     monkeypatch.setattr("app.main.answer_routed", lambda q, **k: _cited_answer("the answer"))
 
     def boom(urls):
@@ -181,8 +219,7 @@ def test_respond_background_freshness_failure_never_disturbs_the_answer(monkeypa
 
     monkeypatch.setattr("index.freshness.refresh_pages", boom)
     chunks = list(respond("how do I use SGD?"))
-    _join_background_freshness()  # the thread raised; the seam swallowed it
-    assert "the answer" in chunks[-1]  # the shown answer stands, untouched
+    assert "the answer" in chunks[-1]  # the check raised → no drift → answer stands
 
 
 def test_respond_animates_the_wait_so_it_never_looks_frozen(monkeypatch):

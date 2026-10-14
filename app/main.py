@@ -87,6 +87,19 @@ TRACE_STYLE = "color:var(--body-text-color-subdued)"
 # the user never sees hosts, model slugs, or config internals.
 ERROR_NOTE = "⚠️ Something went wrong answering that. Please try again in a moment."
 
+# Shown appended to the answer after the post-answer freshness pass found the
+# cited docs drifted and regenerated the answer from the just-refreshed content.
+FRESHNESS_NOTE = (
+    "\n\n<sub>↻ The docs changed since they were last indexed — this answer was "
+    "regenerated from the latest content.</sub>"
+)
+# Hard caps on the post-answer freshness pass, so the live revalidation can
+# never hold the UI the way the unbounded version did. The answer is already on
+# screen throughout; these only bound how long we keep the request open to
+# possibly correct it in place. Overridable per deploy.
+FRESHNESS_CHECK_DEADLINE = float(os.environ.get("TORCHDOCS_FRESHNESS_CHECK_SECONDS", "20"))
+FRESHNESS_REGEN_DEADLINE = float(os.environ.get("TORCHDOCS_FRESHNESS_REGEN_SECONDS", "60"))
+
 _RATE_LOCK = threading.Lock()
 _RATE_BUCKETS: dict[str, deque[float]] = defaultdict(deque)
 
@@ -201,54 +214,26 @@ def _render_trace(lines: list[str], spinner: str | None) -> str:
     return f'<span style="{TRACE_STYLE}">{"<br>".join(rows)}</span>'
 
 
-# The most recent background freshness thread, kept only as a test seam so a
-# test can join it deterministically instead of sleeping. Production ignores it.
-_LAST_FRESHNESS: threading.Thread | None = None
-
-
-def _spawn_freshness(urls: list[str]) -> threading.Thread | None:
-    """Start the post-answer freshness heal on a detached daemon thread.
-
-    Returns the started thread (or None when freshness is disabled). The UI has
-    already delivered its final answer, so this only ever improves the NEXT
-    answer — it must not block or stream. Best-effort: every failure is caught
-    and logged on the worker so it can never surface to a user.
-    """
-    from index import freshness
-
-    if not freshness.enabled():
-        return None
-
-    def _run() -> None:
-        try:
-            freshness.refresh_pages(urls)
-        except Exception as exc:  # noqa: BLE001 — background heal is best-effort
-            print(f"[app] background freshness failed: {type(exc).__name__}: {exc}", flush=True)
-
-    thread = threading.Thread(target=_run, daemon=True)
-    thread.start()
-    global _LAST_FRESHNESS
-    _LAST_FRESHNESS = thread
-    return thread
-
-
 def respond(question: str, request: gr.Request = None):
     """UI entrypoint: show a LIVE thinking indicator, then the answer.
 
     A generator so Gradio streams feedback the instant a question is submitted.
     The pipeline runs on a worker thread while this generator emits an animated
     spinner + stage label every THINKING_TICK seconds — so the multi-second wait
-    reads as "working", not "frozen" — then yields the finished markdown as its
-    LAST value and ends. The spinner ends WITH the answer: there is no
-    post-answer spinner.
+    reads as "working", not "frozen" — then streams the answer prose as it is
+    written and yields the finished markdown.
 
-    Freshness self-heal (index/freshness.py) still runs, but entirely in the
-    BACKGROUND — a detached daemon thread revalidates the cited pages against
-    the live docs and heals any drifted chunks in place, so the NEXT asker of
-    this question gets the corrected answer. It never touches this stream:
-    revalidation is a live, multi-page network fetch, and holding the user's
-    spinner on it spun the wheel for minutes when the docs server was slow.
-    Best-effort — any failure is swallowed on the worker thread.
+    Stale-while-revalidate (index/freshness.py): the answer is served straight
+    from the stored index (fast), and AFTER it is on screen the cited pages are
+    revalidated against the live docs. The check is SILENT — no spinner — so a
+    clean page just ends the request; the answer never flickers. Only if a page
+    actually DRIFTED do we surface a loading spinner + "detected a change …"
+    caption and regenerate the answer from the freshly-healed content, swapping
+    it in place with the ↻ note. Both phases are hard-bounded
+    (FRESHNESS_CHECK_DEADLINE / FRESHNESS_REGEN_DEADLINE): if either runs long
+    the answer already shown simply stands, and the index keeps healing on its
+    daemon thread for the next asker — the live fetch can never hang the UI the
+    way the unbounded version did.
 
     The first yield is the static THINKING_NOTE (immediate paint);
     gradio_client.predict returns the LAST yielded value, so the smoke test
@@ -301,19 +286,59 @@ def respond(question: str, request: gr.Request = None):
         else:
             yield _render_trace(lines, next(frames))  # grey trace + turning wheel
     md = result.get("md", ERROR_NOTE)
-    yield md  # the finished answer, in normal (black) text — the generator ends
-    # here. No post-answer spinner: the wheel stopped the instant the answer
-    # appeared. The freshness self-heal below is detached and never streams.
+    yield md  # the answer, served straight from the index — on screen now
 
-    # Fire-and-forget freshness: revalidate the CITED pages against the live
-    # docs and heal any drifted chunks in place, so the NEXT asker of this
-    # question gets the corrected answer. Background-only by decision — a live,
-    # multi-page network fetch must never hold the user's spinner (it used to,
-    # and a slow docs server spun it for minutes). Best-effort; the worker
-    # swallows and logs any failure, and the shown answer is already final.
+    # ---- stale-while-revalidate: the answer is already shown --------------
     answer = result.get("answer")
-    if answer is not None and answer.citations:
-        _spawn_freshness([c.url for c in answer.citations])
+    if answer is None or not answer.citations:
+        return
+    try:
+        from index import freshness
+
+        if not freshness.enabled():
+            return
+
+        # Phase 1 — SILENT check. Revalidate the cited pages against the live
+        # docs on a daemon thread and wait a bounded time. No spinner: a clean
+        # page (the common case) just ends the request, answer untouched. If the
+        # check outruns its deadline the daemon keeps healing for the next asker.
+        check: dict = {}
+
+        def verify():
+            try:
+                check["drifted"] = freshness.refresh_pages([c.url for c in answer.citations])
+            except Exception as exc:  # noqa: BLE001 — a thread error must not vanish
+                print(f"[app] freshness check failed: {type(exc).__name__}: {exc}", flush=True)
+
+        vt = threading.Thread(target=verify, daemon=True)
+        vt.start()
+        vt.join(FRESHNESS_CHECK_DEADLINE)
+        if not check.get("drifted"):
+            return  # no drift, or still checking / failed → the shown answer stands
+
+        # Phase 2 — DRIFT detected. Now (and only now) surface the updating
+        # state and regenerate from the freshly-healed content, swapping it in
+        # place. Bounded: if regeneration outruns its deadline, keep the shown
+        # answer (the index is already healed for next time).
+        print("[app] cited docs drifted; regenerating in place", flush=True)
+        redo: dict = {}
+
+        def regenerate():
+            try:
+                redo["md"] = render(answer_routed(question)) + FRESHNESS_NOTE
+            except Exception as exc:  # noqa: BLE001 — keep the original on failure
+                print(f"[app] regeneration failed: {type(exc).__name__}: {exc}", flush=True)
+
+        rt = threading.Thread(target=regenerate, daemon=True)
+        rt.start()
+        deadline = time.monotonic() + FRESHNESS_REGEN_DEADLINE
+        while rt.is_alive() and time.monotonic() < deadline:
+            rt.join(timeout=THINKING_TICK)
+            yield f"{md}\n\n<sub>{next(frames)} detected a change in the docs — updating…</sub>"
+        yield redo.get("md", md)  # the corrected answer, or the original if it didn't finish
+    except Exception as exc:  # noqa: BLE001 — freshness must never disturb the answer
+        print(f"[app] freshness pass skipped: {type(exc).__name__}: {exc}", flush=True)
+        yield md
 
 
 def build_ui():

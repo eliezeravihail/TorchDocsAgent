@@ -36,7 +36,7 @@ The agent runs as a live web app on Hugging Face Spaces — nothing to install:
 
 Type a question in English and press **Ask** (or Enter):
 
-- Answers are served instantly from content stored in the index, then the cited pages are **revalidated against the live docs** in the background — the index self-heals and the answer is corrected if the docs changed.
+- Answers are served instantly from content stored in the index. The cited pages are then **revalidated against the live docs** in the background — the check is silent, so a clean answer just stands. If a page actually changed, the index **self-heals** and the answer is **regenerated in place** from the fresh content (with a brief "updating…" note), so what you read is never stale.
 - Every answer lists the **exact documentation pages** it used as clickable citations, plus a link to the source license.
 - Questions about implementation internals (source code) are **referred out** to GitHub / DeepWiki rather than guessed.
 
@@ -55,7 +55,7 @@ The repo **is** the Space: the YAML header above configures it, `app.py` is the 
 | `TORCHDOCS_OPENAI_COMPAT_MODEL` | comma-separated free model slugs (a fallback chain) |
 | `GEMINI` / `GEMINI_API_KEY` | fallback provider key |
 
-If the primary provider is unreachable or a free model is rate-limited, the app **self-heals** to the next model, then to any other provider that has a key — so one broken secret doesn't take the Space down. A push-triggered smoke test ([`.github/workflows/smoke-hf.yml`](.github/workflows/smoke-hf.yml)) asks the live Space a question after each deploy and fails if it can't answer. See [docs/deploy-hf-spaces.md](docs/deploy-hf-spaces.md) for the full walkthrough.
+If the primary provider is unreachable or a free model is rate-limited, the app **self-heals** to the next model, then to any other provider that has a key — so one broken secret doesn't take the Space down. The deploy workflow's **smoke-test job** ([`.github/workflows/sync-to-hf.yml`](.github/workflows/sync-to-hf.yml)) asks the live Space a question after each deploy and fails if it can't answer. See [docs/deploy-hf-spaces.md](docs/deploy-hf-spaces.md) for the full walkthrough.
 
 ## Goals
 
